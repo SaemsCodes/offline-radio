@@ -30,7 +30,7 @@ export const PTTButton: React.FC<PTTButtonProps> = ({
             : 'bg-gradient-to-b from-orange-500 to-orange-700 border-orange-400 hover:from-orange-400 hover:to-orange-600 shadow-lg'
           : 'bg-gray-800 border-gray-600 cursor-not-allowed'
       }`}
-      whilePressed={{ scale: 0.95 }}
+      whileTap={{ scale: 0.95 }}
       animate={isTransmitting ? { 
         boxShadow: ['0 0 20px rgba(239, 68, 68, 0.5)', '0 0 40px rgba(239, 68, 68, 0.8)', '0 0 20px rgba(239, 68, 68, 0.5)']
       } : {}}
