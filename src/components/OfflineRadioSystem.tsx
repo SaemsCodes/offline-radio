@@ -19,7 +19,15 @@ interface ChatMessage {
 
 // Mesh Network Protocol Implementation
 class MeshNode {
-  constructor(nodeId, onMessage, onPeerUpdate) {
+  public nodeId: string;
+  public peers: Map<string, any>;
+  public routingTable: Map<string, { nextHop: string; hopCount: number }>;
+  public messageHistory: Set<string>;
+  public onMessage: (message: any) => void;
+  public onPeerUpdate: (peers: string[]) => void;
+  public sequenceNumber: number;
+
+  constructor(nodeId: string, onMessage: (message: any) => void, onPeerUpdate: (peers: string[]) => void) {
     this.nodeId = nodeId;
     this.peers = new Map(); // peerId -> DataChannel
     this.routingTable = new Map(); // destination -> next hop
@@ -30,14 +38,14 @@ class MeshNode {
   }
 
   // AODV-inspired routing protocol
-  updateRoutingTable(destination, nextHop, hopCount) {
+  updateRoutingTable(destination: string, nextHop: string, hopCount: number) {
     const existing = this.routingTable.get(destination);
     if (!existing || existing.hopCount > hopCount) {
       this.routingTable.set(destination, { nextHop, hopCount });
     }
   }
 
-  broadcastRouteDiscovery(destination) {
+  broadcastRouteDiscovery(destination: string) {
     const rreq = {
       type: 'RREQ',
       id: `${this.nodeId}-${++this.sequenceNumber}`,
@@ -50,7 +58,7 @@ class MeshNode {
     this.broadcast(rreq);
   }
 
-  handleRouteRequest(rreq, fromPeer) {
+  handleRouteRequest(rreq: any, fromPeer: string) {
     const messageId = rreq.id;
     if (this.messageHistory.has(messageId)) return;
     
@@ -74,7 +82,7 @@ class MeshNode {
     }
   }
 
-  handleRouteReply(rrep, fromPeer) {
+  handleRouteReply(rrep: any, fromPeer: string) {
     this.updateRoutingTable(rrep.destination, fromPeer, rrep.hopCount + 1);
     
     if (rrep.source !== this.nodeId) {
@@ -86,7 +94,7 @@ class MeshNode {
     }
   }
 
-  routeMessage(message) {
+  routeMessage(message: any) {
     const messageId = `${message.sender}-${message.timestamp}`;
     if (this.messageHistory.has(messageId)) return;
     
@@ -110,7 +118,7 @@ class MeshNode {
     }
   }
 
-  broadcast(message, excludePeer = null) {
+  broadcast(message: any, excludePeer: string | null = null) {
     for (const [peerId, channel] of this.peers) {
       if (peerId !== excludePeer && channel.readyState === 'open') {
         this.sendToPeer(peerId, message);
@@ -118,7 +126,7 @@ class MeshNode {
     }
   }
 
-  sendToPeer(peerId, message) {
+  sendToPeer(peerId: string, message: any) {
     const channel = this.peers.get(peerId);
     if (channel && channel.readyState === 'open') {
       try {
@@ -129,13 +137,13 @@ class MeshNode {
     }
   }
 
-  addPeer(peerId, channel) {
+  addPeer(peerId: string, channel: any) {
     this.peers.set(peerId, channel);
     this.updateRoutingTable(peerId, peerId, 1);
     this.onPeerUpdate(Array.from(this.peers.keys()));
   }
 
-  removePeer(peerId) {
+  removePeer(peerId: string) {
     this.peers.delete(peerId);
     this.routingTable.delete(peerId);
     this.onPeerUpdate(Array.from(this.peers.keys()));
@@ -144,7 +152,16 @@ class MeshNode {
 
 // WebRTC Connection Manager
 class WebRTCManager {
-  constructor(onMessage, onPeerUpdate, onConnectionStatusChange) {
+  public localId: string;
+  public meshNode: MeshNode;
+  public signalingSocket: WebSocket | null;
+  public isConnected: boolean;
+  public onConnectionStatusChange: (connected: boolean) => void;
+  public connections: Map<string, RTCPeerConnection>;
+  public reconnectAttempts: number;
+  public maxReconnectAttempts: number;
+
+  constructor(onMessage: (message: any) => void, onPeerUpdate: (peers: string[]) => void, onConnectionStatusChange: (connected: boolean) => void) {
     this.localId = Math.random().toString(36).substring(2, 15);
     this.meshNode = new MeshNode(this.localId, onMessage, onPeerUpdate);
     this.signalingSocket = null;
@@ -182,7 +199,7 @@ class WebRTCManager {
     }
   }
 
-  async connectToSignalingServer(url) {
+  async connectToSignalingServer(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
         this.signalingSocket = new WebSocket(url);
@@ -193,7 +210,7 @@ class WebRTCManager {
           this.reconnectAttempts = 0;
           this.onConnectionStatusChange(true);
           
-          this.signalingSocket.send(JSON.stringify({
+          this.signalingSocket!.send(JSON.stringify({
             type: 'join',
             id: this.localId,
             room: 'mesh-radio'
@@ -358,17 +375,17 @@ class WebRTCManager {
     const myInfo = { id: this.localId, timestamp: Date.now() };
     
     // Remove old entries and add current peer
-    const filteredPeers = peers.filter(p => Date.now() - p.timestamp < 300000 && p.id !== this.localId);
+    const filteredPeers = peers.filter((p: any) => Date.now() - p.timestamp < 300000 && p.id !== this.localId);
     filteredPeers.push(myInfo);
     
     localStorage.setItem('mesh-radio-peers', JSON.stringify(filteredPeers));
   }
 
-  simulateLocalPeerConnection(peerId) {
+  simulateLocalPeerConnection(peerId: string) {
     // Simulate a peer connection for demo purposes
     const mockChannel = {
       readyState: 'open',
-      send: (data) => {
+      send: (data: string) => {
         console.log(`Mock send to ${peerId}:`, data);
         // In a real implementation, this would send via WebRTC
       }
@@ -377,7 +394,7 @@ class WebRTCManager {
     this.meshNode.addPeer(peerId, mockChannel);
   }
 
-  async handleSignalingMessage(data) {
+  async handleSignalingMessage(data: any) {
     switch (data.type) {
       case 'peer-list':
         // Connect to existing peers
@@ -412,7 +429,7 @@ class WebRTCManager {
     }
   }
 
-  async createPeerConnection(peerId, isInitiator = false) {
+  async createPeerConnection(peerId: string, isInitiator = false) {
     if (this.connections.has(peerId)) {
       return this.connections.get(peerId);
     }
@@ -478,7 +495,7 @@ class WebRTCManager {
     return connection;
   }
 
-  setupDataChannel(channel, peerId) {
+  setupDataChannel(channel: RTCDataChannel, peerId: string) {
     channel.onopen = () => {
       console.log(`Data channel to ${peerId} opened`);
       this.meshNode.addPeer(peerId, channel);
@@ -506,13 +523,13 @@ class WebRTCManager {
     };
   }
 
-  async handleOffer(data) {
+  async handleOffer(data: any) {
     try {
       const connection = await this.createPeerConnection(data.from, false);
-      await connection.setRemoteDescription(data.offer);
+      await connection!.setRemoteDescription(data.offer);
       
-      const answer = await connection.createAnswer();
-      await connection.setLocalDescription(answer);
+      const answer = await connection!.createAnswer();
+      await connection!.setLocalDescription(answer);
       
       if (this.signalingSocket?.readyState === WebSocket.OPEN) {
         this.signalingSocket.send(JSON.stringify({
@@ -527,7 +544,7 @@ class WebRTCManager {
     }
   }
 
-  async handleAnswer(data) {
+  async handleAnswer(data: any) {
     try {
       const connection = this.connections.get(data.from);
       if (connection) {
@@ -538,7 +555,7 @@ class WebRTCManager {
     }
   }
 
-  async handleIceCandidate(data) {
+  async handleIceCandidate(data: any) {
     try {
       const connection = this.connections.get(data.from);
       if (connection && data.candidate) {
@@ -549,7 +566,7 @@ class WebRTCManager {
     }
   }
 
-  handlePeerLeft(peerId) {
+  handlePeerLeft(peerId: string) {
     this.meshNode.removePeer(peerId);
     const connection = this.connections.get(peerId);
     if (connection) {
@@ -558,7 +575,7 @@ class WebRTCManager {
     }
   }
 
-  sendMessage(message) {
+  sendMessage(message: any) {
     const meshMessage = {
       ...message,
       sender: this.localId,
