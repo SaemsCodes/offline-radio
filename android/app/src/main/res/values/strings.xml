@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ORAD</string>
+    <string name="title_activity_main">ORAD</string>
+    <string name="package_name">com.orad.app</string>
+    <string name="custom_url_scheme">com.orad.app</string>
+</resources>

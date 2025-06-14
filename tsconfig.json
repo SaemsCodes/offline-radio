@@ -5,6 +5,22 @@
     { "path": "./tsconfig.node.json" }
   ],
   "compilerOptions": {
+<<<<<<< HEAD
+=======
+    "target": "es2017",
+    "lib": ["es2017", "dom"],
+    "module": "esnext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "typeRoots": ["node_modules/@types", "src/global.d.ts"],
+>>>>>>> 509e9ef (Added dependencies, backend & android configurations)
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
