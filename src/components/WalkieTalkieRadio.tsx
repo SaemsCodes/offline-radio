@@ -99,7 +99,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
           
           {/* Antenna */}
           <div className="absolute -top-8 left-1/2 transform -translate-x-1/2">
-            <div className={`w-2 h-12 rounded-full ${isPoweredOn ? 'bg-gradient-to-t from-orange-600 to-orange-400' : 'bg-gray-600'} relative`}>
+            <div className={`w-2 h-12 rounded-full relative ${isPoweredOn ? 'bg-gradient-to-t from-orange-600 to-orange-400' : 'bg-gray-600'}`}>
               {isPoweredOn && (
                 <motion.div
                   animate={{ 
@@ -175,11 +175,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
           <div className="bg-black p-4 relative">
             {/* Screen bezel */}
             <div className="border-2 border-gray-600 rounded-lg p-1 bg-gradient-to-b from-gray-800 to-gray-900">
-              <div className={`rounded-lg p-4 transition-all duration-300 ${
-                isPoweredOn 
-                  ? 'bg-gradient-to-b from-green-900 to-green-950 border border-green-700 shadow-inner' 
-                  : 'bg-gray-900 border border-gray-700'
-              }`}>
+              <div className={`rounded-lg p-4 transition-all duration-300 ${isPoweredOn ? 'bg-gradient-to-b from-green-900 to-green-950 border border-green-700 shadow-inner' : 'bg-gray-900 border border-gray-700'}`}>
                 {isPoweredOn ? (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-green-400 text-sm font-mono">
