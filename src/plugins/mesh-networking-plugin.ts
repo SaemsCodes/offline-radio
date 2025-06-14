@@ -1,9 +1,5 @@
-
 import { registerPlugin } from '@capacitor/core';
-
-export interface PluginListenerHandle {
-  remove: () => Promise<void>;
-}
+import type { PluginListenerHandle } from '@capacitor/core';
 
 export interface MeshPeer {
   id: string;
@@ -22,10 +18,6 @@ export interface MeshMessage {
   timestamp: number;
   hops: number;
   type: 'text' | 'voice' | 'emergency' | 'route-request';
-  // Add routing metadata
-  nextHop?: string;
-  path?: string[];
-  maxHops: number;
 }
 
 export interface RouteDiscoveryResult {
@@ -98,3 +90,10 @@ const MeshNetworking = registerPlugin<MeshNetworkingPlugin>('MeshNetworking');
 // Export as default and named for flexibility
 export default MeshNetworking;
 export { MeshNetworking };
+// mesh-networking-plugin.ts
+export interface MeshMessage {
+    // Add routing metadata
+    nextHop?: string;
+    path?: string[];
+    maxHops: number;
+  }

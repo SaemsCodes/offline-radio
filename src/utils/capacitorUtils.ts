@@ -1,14 +1,8 @@
-
 // src/utils/capacitorUtils.ts
-
-// Define the Plugin interface
-export interface Plugin {
-  addListener(eventName: string, listenerFunc: (...args: any[]) => void): Promise<any>;
-  removeAllListeners(): Promise<void>;
-}
+import type { Plugin } from '@capacitor/core';
 
 // Define the registerPlugin function explicitly
-export const registerPlugin = <T extends Plugin>(pluginName: string): T => {
+export const registerPlugin = <T extends Plugin>(pluginName: string) => {
   try {
     // Try Capacitor's native implementation
     const { Plugins } = require('@capacitor/core');
@@ -17,12 +11,11 @@ export const registerPlugin = <T extends Plugin>(pluginName: string): T => {
     try {
       // Try modern Capacitor 5+ export
       const { registerPlugin: coreRegisterPlugin } = require('@capacitor/core');
-      return coreRegisterPlugin(pluginName) as T;
+      return coreRegisterPlugin<T>(pluginName);
     } catch {
       // Fallback to mock implementation
       return {
-        addListener: () => Promise.resolve({ remove: () => Promise.resolve() }),
-        removeAllListeners: () => Promise.resolve(),
+        addListener: () => ({ remove: () => {} }),
         startRecording: () => Promise.resolve(),
         stopRecording: () => Promise.resolve(),
         transmitAudio: () => Promise.resolve(),
