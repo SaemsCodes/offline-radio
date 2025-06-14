@@ -16,11 +16,13 @@ export interface MeshNetworkHook {
   messages: MeshMessage[];
   sendMessage: (content: string, destination?: string, type?: 'text' | 'voice') => void;
   sendBroadcast: (content: string, type?: 'text' | 'voice') => void;
+  sendAudioMessage: (audioData: ArrayBuffer, destination?: string) => void;
   initializeNetwork: () => Promise<void>;
   destroyNetwork: () => void;
   getConnectedPeers: () => string[];
   isTransmitting: boolean;
   setIsTransmitting: (transmitting: boolean) => void;
+  onAudioReceived: (callback: (audioData: ArrayBuffer, fromPeer: string) => void) => void;
 }
 
 export const useMeshNetwork = (): MeshNetworkHook => {
@@ -39,6 +41,7 @@ export const useMeshNetwork = (): MeshNetworkHook => {
   const routingManagerRef = useRef<MeshRoutingManager | null>(null);
   const qualityCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pendingMessagesRef = useRef<MeshMessage[]>([]);
+  const audioCallbackRef = useRef<((audioData: ArrayBuffer, fromPeer: string) => void) | null>(null);
 
   // Initialize network components
   const initializeNetwork = useCallback(async (): Promise<void> => {
@@ -89,7 +92,18 @@ export const useMeshNetwork = (): MeshNetworkHook => {
       });
 
       webrtcManager.on('message-received', (message: MeshMessage, fromPeer: string) => {
-        // Handle routing first
+        // Handle audio messages specifically
+        if (message.type === 'voice' && audioCallbackRef.current) {
+          try {
+            // Decode base64 audio data
+            const audioData = base64ToArrayBuffer(message.content);
+            audioCallbackRef.current(audioData, fromPeer);
+          } catch (error) {
+            console.error('Failed to decode audio message:', error);
+          }
+        }
+        
+        // Handle routing
         const nextHop = routingManager.routeMessage(message);
         
         setNetworkStatus(prev => ({
@@ -184,7 +198,7 @@ export const useMeshNetwork = (): MeshNetworkHook => {
     }));
   }, [networkStatus.lastActivity]);
 
-  // Send message to specific destination or broadcast
+  // Send text message
   const sendMessage = useCallback((content: string, destination: string = 'broadcast', type: 'text' | 'voice' = 'text'): void => {
     if (!webrtcManagerRef.current || !routingManagerRef.current) {
       console.warn('Network not initialized');
@@ -211,6 +225,30 @@ export const useMeshNetwork = (): MeshNetworkHook => {
     }));
   }, []);
 
+  // Send audio message
+  const sendAudioMessage = useCallback((audioData: ArrayBuffer, destination: string = 'broadcast'): void => {
+    if (!webrtcManagerRef.current || !routingManagerRef.current) {
+      console.warn('Network not initialized');
+      return;
+    }
+
+    // Convert audio data to base64 for transmission
+    const base64Audio = arrayBufferToBase64(audioData);
+    const message = routingManagerRef.current.createMessage(base64Audio, destination, 'voice');
+    
+    if (webrtcManagerRef.current.getPeerCount() > 0) {
+      webrtcManagerRef.current.sendMessage(message);
+      console.log(`Sent audio message to ${destination}, size: ${audioData.byteLength} bytes`);
+    } else {
+      console.warn('No peers connected to send audio message');
+    }
+
+    setNetworkStatus(prev => ({
+      ...prev,
+      lastActivity: new Date()
+    }));
+  }, []);
+
   // Convenience method for broadcasting
   const sendBroadcast = useCallback((content: string, type: 'text' | 'voice' = 'text'): void => {
     sendMessage(content, 'broadcast', type);
@@ -219,6 +257,11 @@ export const useMeshNetwork = (): MeshNetworkHook => {
   // Get list of connected peers
   const getConnectedPeers = useCallback((): string[] => {
     return webrtcManagerRef.current?.getConnectedPeers() || [];
+  }, []);
+
+  // Set callback for received audio
+  const onAudioReceived = useCallback((callback: (audioData: ArrayBuffer, fromPeer: string) => void): void => {
+    audioCallbackRef.current = callback;
   }, []);
 
   // Cleanup network on unmount
@@ -248,6 +291,7 @@ export const useMeshNetwork = (): MeshNetworkHook => {
 
     setMessages([]);
     pendingMessagesRef.current = [];
+    audioCallbackRef.current = null;
   }, []);
 
   // Cleanup on unmount
@@ -262,10 +306,31 @@ export const useMeshNetwork = (): MeshNetworkHook => {
     messages,
     sendMessage,
     sendBroadcast,
+    sendAudioMessage,
     initializeNetwork,
     destroyNetwork,
     getConnectedPeers,
     isTransmitting,
-    setIsTransmitting
+    setIsTransmitting,
+    onAudioReceived
   };
 };
+
+// Utility functions
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
