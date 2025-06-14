@@ -77,7 +77,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    
       {/* Background overlay */}
       <div 
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
