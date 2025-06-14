@@ -17,7 +17,8 @@ import { ChannelSelector } from './radio/ChannelSelector';
 import { StatusDisplay } from './radio/StatusDisplay';
 import { PTTButton } from './radio/PTTButton';
 import { SettingsPanel } from './radio/SettingsPanel';
-import { useRadioMesh } from '../hooks/useRadioMesh';
+import { useMeshNetwork } from '../hooks/useMeshNetwork';
+import { useAudioManager } from '../hooks/useAudioManager';
 
 interface WalkieTalkieRadioProps {
   isOpen: boolean;
@@ -32,15 +33,41 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [batteryLevel, setBatteryLevel] = useState(85);
   
+  // Use real mesh network instead of simulated
   const { 
-    isConnected, 
-    peerCount, 
-    isTransmitting, 
+    networkStatus,
     messages,
     sendMessage,
-    startTransmission,
-    stopTransmission 
-  } = useRadioMesh(isPoweredOn, channel);
+    sendBroadcast,
+    initializeNetwork,
+    destroyNetwork,
+    getConnectedPeers,
+    isTransmitting,
+    setIsTransmitting
+  } = useMeshNetwork();
+
+  // Real audio manager for PTT functionality
+  const {
+    isRecording,
+    audioLevel,
+    startRecording,
+    stopRecording,
+    playAudio,
+    setSettings: setAudioSettings
+  } = useAudioManager();
+
+  // Initialize mesh network when powered on
+  useEffect(() => {
+    if (isPoweredOn && !networkStatus.isConnected) {
+      console.log(`Radio powered on - Channel ${channel} - Initializing mesh network`);
+      initializeNetwork().catch(error => {
+        console.error('Failed to initialize mesh network:', error);
+      });
+    } else if (!isPoweredOn && networkStatus.isConnected) {
+      console.log('Radio powered off - Destroying mesh network');
+      destroyNetwork();
+    }
+  }, [isPoweredOn, channel, networkStatus.isConnected, initializeNetwork, destroyNetwork]);
 
   // Battery simulation
   useEffect(() => {
@@ -48,17 +75,91 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
     
     const interval = setInterval(() => {
       setBatteryLevel(prev => Math.max(0, prev - 0.1));
-    }, 30000); // Drain battery slowly
+    }, 30000);
     
     return () => clearInterval(interval);
   }, [isPoweredOn]);
+
+  // Configure audio settings for mesh radio
+  useEffect(() => {
+    setAudioSettings({
+      sampleRate: 16000,
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      voiceActivityDetection: true
+    });
+  }, [setAudioSettings]);
 
   const handlePowerToggle = () => {
     setIsPoweredOn(!isPoweredOn);
     if (isPoweredOn) {
       setIsSettingsOpen(false);
+      setIsTransmitting(false);
     }
   };
+
+  const handleStartTransmission = async () => {
+    if (!isPoweredOn || !networkStatus.isConnected) return;
+    
+    try {
+      await startRecording();
+      setIsTransmitting(true);
+      console.log('Started real audio transmission');
+    } catch (error) {
+      console.error('Failed to start transmission:', error);
+    }
+  };
+
+  const handleStopTransmission = async () => {
+    if (!isRecording) return;
+    
+    try {
+      const audioBlob = await stopRecording();
+      setIsTransmitting(false);
+      
+      if (audioBlob && networkStatus.isConnected) {
+        // Convert audio to base64 for mesh transmission
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64Audio = (reader.result as string).split(',')[1];
+          sendBroadcast(base64Audio, 'voice');
+          console.log('Transmitted audio over mesh network');
+        };
+        reader.readAsDataURL(audioBlob);
+      }
+    } catch (error) {
+      console.error('Failed to stop transmission:', error);
+      setIsTransmitting(false);
+    }
+  };
+
+  const handleSendMessage = (message: string) => {
+    if (!isPoweredOn || !networkStatus.isConnected) return;
+    sendBroadcast(message, 'text');
+  };
+
+  // Handle incoming voice messages
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+    if (latestMessage && latestMessage.type === 'voice' && latestMessage.sender !== networkStatus.localId) {
+      try {
+        // Convert base64 back to audio blob and play
+        const audioData = atob(latestMessage.content);
+        const audioArray = new Uint8Array(audioData.length);
+        for (let i = 0; i < audioData.length; i++) {
+          audioArray[i] = audioData.charCodeAt(i);
+        }
+        const audioBlob = new Blob([audioArray], { type: 'audio/webm' });
+        playAudio(audioBlob).catch(error => {
+          console.error('Failed to play received audio:', error);
+        });
+      } catch (error) {
+        console.error('Failed to decode received audio:', error);
+      }
+    }
+  }, [messages, networkStatus.localId, playAudio]);
 
   if (!isOpen) return null;
 
@@ -93,8 +194,8 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
               </div>
               <StatusDisplay 
                 isPoweredOn={isPoweredOn}
-                isConnected={isConnected}
-                peerCount={peerCount}
+                isConnected={networkStatus.isConnected}
+                peerCount={networkStatus.peerCount}
                 batteryLevel={batteryLevel}
               />
             </div>
@@ -112,15 +213,18 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                   <div className="flex items-center justify-between text-green-400 text-sm font-mono">
                     <span>MESH RADIO</span>
                     <div className="flex items-center space-x-1">
-                      {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                      {networkStatus.isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                       <Signal className="w-3 h-3" />
                     </div>
                   </div>
                   <div className="text-green-300 text-xs font-mono">
-                    {peerCount} PEERS CONNECTED
+                    {networkStatus.peerCount} PEERS | {networkStatus.connectionQuality.toUpperCase()}
                   </div>
                   <div className="text-green-300 text-xs font-mono">
                     VOL: {volume} | SQL: {squelch}
+                  </div>
+                  <div className="text-green-300 text-xs font-mono">
+                    ID: {networkStatus.localId.slice(0, 8)}
                   </div>
                   {isTransmitting && (
                     <motion.div
@@ -130,6 +234,11 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                     >
                       *** TRANSMITTING ***
                     </motion.div>
+                  )}
+                  {audioLevel > 0 && (
+                    <div className="text-blue-400 text-xs font-mono">
+                      AUDIO: {Math.round(audioLevel * 100)}%
+                    </div>
                   )}
                 </div>
               ) : (
@@ -189,9 +298,9 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
           <div className="p-4 pt-0">
             <PTTButton
               isTransmitting={isTransmitting}
-              onStartTransmission={startTransmission}
-              onStopTransmission={stopTransmission}
-              isPoweredOn={isPoweredOn}
+              onStartTransmission={handleStartTransmission}
+              onStopTransmission={handleStopTransmission}
+              isPoweredOn={isPoweredOn && networkStatus.isConnected}
             />
           </div>
 
@@ -212,7 +321,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
             <SettingsPanel 
               onClose={() => setIsSettingsOpen(false)}
               messages={messages}
-              onSendMessage={sendMessage}
+              onSendMessage={handleSendMessage}
             />
           )}
         </AnimatePresence>

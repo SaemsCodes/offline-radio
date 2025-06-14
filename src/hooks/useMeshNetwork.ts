@@ -1,7 +1,8 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { WebRTCManager, MeshMessage } from '../services/WebRTCManager';
 import { MeshRoutingManager } from '../services/MeshRoutingManager';
+import { NativeMeshBridge } from '../services/NativeMeshBridge';
+import { Capacitor } from '@capacitor/core';
 
 export interface NetworkStatus {
   isConnected: boolean;
@@ -37,116 +38,178 @@ export const useMeshNetwork = (): MeshNetworkHook => {
   
   const webrtcManagerRef = useRef<WebRTCManager | null>(null);
   const routingManagerRef = useRef<MeshRoutingManager | null>(null);
+  const nativeBridgeRef = useRef<NativeMeshBridge | null>(null);
   const qualityCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pendingMessagesRef = useRef<MeshMessage[]>([]);
+  const isNativeRef = useRef<boolean>(false);
+
+  // Check if running on native platform
+  useEffect(() => {
+    isNativeRef.current = Capacitor.isNativePlatform();
+    console.log(`Mesh network running on ${isNativeRef.current ? 'native' : 'web'} platform`);
+  }, []);
 
   // Initialize network components
   const initializeNetwork = useCallback(async (): Promise<void> => {
-    if (webrtcManagerRef.current) {
+    if (webrtcManagerRef.current || nativeBridgeRef.current) {
       return; // Already initialized
     }
 
     try {
-      const webrtcManager = new WebRTCManager();
-      const routingManager = new MeshRoutingManager(webrtcManager.getLocalId());
+      if (isNativeRef.current) {
+        // Initialize native mesh bridge
+        const nativeBridge = NativeMeshBridge.getInstance();
+        nativeBridgeRef.current = nativeBridge;
 
-      webrtcManagerRef.current = webrtcManager;
-      routingManagerRef.current = routingManager;
+        // Set up native bridge event handlers
+        nativeBridge.on('peerDiscovered', (peer: any) => {
+          setNetworkStatus(prev => ({
+            ...prev,
+            peerCount: prev.peerCount + 1,
+            lastActivity: new Date()
+          }));
+        });
 
-      // Set up WebRTC event handlers
-      webrtcManager.on('initialized', () => {
-        setNetworkStatus(prev => ({
-          ...prev,
-          localId: webrtcManager.getLocalId(),
-          isConnected: true,
-          lastActivity: new Date()
-        }));
-      });
+        nativeBridge.on('peerLost', (peerId: string) => {
+          setNetworkStatus(prev => ({
+            ...prev,
+            peerCount: Math.max(0, prev.peerCount - 1),
+            lastActivity: new Date()
+          }));
+        });
 
-      webrtcManager.on('peer-connected', (peerId: string) => {
-        setNetworkStatus(prev => ({
-          ...prev,
-          peerCount: webrtcManager.getPeerCount(),
-          lastActivity: new Date()
-        }));
+        nativeBridge.on('messageReceived', (message: MeshMessage) => {
+          setMessages(prev => [...prev, message]);
+          setNetworkStatus(prev => ({
+            ...prev,
+            lastActivity: new Date()
+          }));
+        });
+
+        nativeBridge.on('networkStatusChanged', (status: any) => {
+          setNetworkStatus(prev => ({
+            ...prev,
+            isConnected: status.isConnected,
+            peerCount: status.peerCount,
+            lastActivity: new Date()
+          }));
+        });
+
+        await nativeBridge.initialize();
         
-        // Send any pending messages
-        const pending = pendingMessagesRef.current.splice(0);
-        pending.forEach(message => {
+        // Get initial status
+        const status = await nativeBridge.getNetworkStatus();
+        const peers = await nativeBridge.getConnectedPeers();
+        
+        setNetworkStatus(prev => ({
+          ...prev,
+          isConnected: status.isConnected,
+          peerCount: peers.length,
+          localId: 'native-node',
+          lastActivity: new Date()
+        }));
+
+      } else {
+        // Initialize WebRTC mesh network for web
+        const webrtcManager = new WebRTCManager();
+        const routingManager = new MeshRoutingManager(webrtcManager.getLocalId());
+
+        webrtcManagerRef.current = webrtcManager;
+        routingManagerRef.current = routingManager;
+
+        // Set up WebRTC event handlers
+        webrtcManager.on('initialized', () => {
+          setNetworkStatus(prev => ({
+            ...prev,
+            localId: webrtcManager.getLocalId(),
+            isConnected: true,
+            lastActivity: new Date()
+          }));
+        });
+
+        webrtcManager.on('peer-connected', (peerId: string) => {
+          setNetworkStatus(prev => ({
+            ...prev,
+            peerCount: webrtcManager.getPeerCount(),
+            lastActivity: new Date()
+          }));
+          
+          const pending = pendingMessagesRef.current.splice(0);
+          pending.forEach(message => {
+            webrtcManager.sendMessage(message);
+          });
+        });
+
+        webrtcManager.on('peer-disconnected', (peerId: string) => {
+          setNetworkStatus(prev => ({
+            ...prev,
+            peerCount: webrtcManager.getPeerCount(),
+            lastActivity: new Date()
+          }));
+          
+          routingManager.updatePeerConnectivity(peerId, false);
+        });
+
+        webrtcManager.on('message-received', (message: MeshMessage, fromPeer: string) => {
+          // Handle routing first
+          const nextHop = routingManager.routeMessage(message);
+          
+          setNetworkStatus(prev => ({
+            ...prev,
+            lastActivity: new Date()
+          }));
+        });
+
+        // Set up routing event handlers
+        routingManager.on('message-for-local-node', (message: MeshMessage) => {
+          setMessages(prev => [...prev, message]);
+        });
+
+        routingManager.on('broadcast-route-request', (routeRequest: any) => {
+          const requestMessage: MeshMessage = {
+            id: routeRequest.id,
+            sender: routeRequest.source,
+            destination: 'broadcast',
+            content: JSON.stringify(routeRequest),
+            type: 'route_request',
+            timestamp: routeRequest.timestamp,
+            hopCount: routeRequest.hopCount,
+            sequenceNumber: routeRequest.sequenceNumber
+          };
+          webrtcManager.sendMessage(requestMessage);
+        });
+
+        routingManager.on('send-route-reply', (routeReply: any, targetPeer: string) => {
+          const replyMessage: MeshMessage = {
+            id: routeReply.id,
+            sender: webrtcManager.getLocalId(),
+            destination: targetPeer,
+            content: JSON.stringify(routeReply),
+            type: 'route_reply',
+            timestamp: Date.now(),
+            hopCount: routeReply.hopCount,
+            sequenceNumber: routeReply.sequenceNumber
+          };
+          webrtcManager.sendMessage(replyMessage);
+        });
+
+        routingManager.on('forward-message', (message: MeshMessage, nextHop: string) => {
           webrtcManager.sendMessage(message);
         });
-      });
 
-      webrtcManager.on('peer-disconnected', (peerId: string) => {
-        setNetworkStatus(prev => ({
-          ...prev,
-          peerCount: webrtcManager.getPeerCount(),
-          lastActivity: new Date()
-        }));
+        routingManager.on('forward-broadcast', (message: MeshMessage) => {
+          webrtcManager.sendMessage(message);
+        });
+
+        // Start connection quality monitoring
+        qualityCheckIntervalRef.current = setInterval(() => {
+          updateConnectionQuality();
+        }, 5000);
         
-        // Update routing table
-        routingManager.updatePeerConnectivity(peerId, false);
-      });
+        // Initialize WebRTC
+        await webrtcManager.initialize();
+      }
 
-      webrtcManager.on('message-received', (message: MeshMessage, fromPeer: string) => {
-        // Handle routing first
-        const nextHop = routingManager.routeMessage(message);
-        
-        setNetworkStatus(prev => ({
-          ...prev,
-          lastActivity: new Date()
-        }));
-      });
-
-      // Set up routing event handlers
-      routingManager.on('message-for-local-node', (message: MeshMessage) => {
-        setMessages(prev => [...prev, message]);
-      });
-
-      routingManager.on('broadcast-route-request', (routeRequest: any) => {
-        const requestMessage: MeshMessage = {
-          id: routeRequest.id,
-          sender: routeRequest.source,
-          destination: 'broadcast',
-          content: JSON.stringify(routeRequest),
-          type: 'route_request',
-          timestamp: routeRequest.timestamp,
-          hopCount: routeRequest.hopCount,
-          sequenceNumber: routeRequest.sequenceNumber
-        };
-        webrtcManager.sendMessage(requestMessage);
-      });
-
-      routingManager.on('send-route-reply', (routeReply: any, targetPeer: string) => {
-        const replyMessage: MeshMessage = {
-          id: routeReply.id,
-          sender: webrtcManager.getLocalId(),
-          destination: targetPeer,
-          content: JSON.stringify(routeReply),
-          type: 'route_reply',
-          timestamp: Date.now(),
-          hopCount: routeReply.hopCount,
-          sequenceNumber: routeReply.sequenceNumber
-        };
-        webrtcManager.sendMessage(replyMessage);
-      });
-
-      routingManager.on('forward-message', (message: MeshMessage, nextHop: string) => {
-        webrtcManager.sendMessage(message);
-      });
-
-      routingManager.on('forward-broadcast', (message: MeshMessage) => {
-        webrtcManager.sendMessage(message);
-      });
-
-      // Start connection quality monitoring
-      qualityCheckIntervalRef.current = setInterval(() => {
-        updateConnectionQuality();
-      }, 5000);
-
-      // Initialize WebRTC
-      await webrtcManager.initialize();
-      
     } catch (error) {
       console.error('Failed to initialize mesh network:', error);
       setNetworkStatus(prev => ({
@@ -160,9 +223,7 @@ export const useMeshNetwork = (): MeshNetworkHook => {
 
   // Update connection quality based on various metrics
   const updateConnectionQuality = useCallback(() => {
-    if (!webrtcManagerRef.current) return;
-
-    const peerCount = webrtcManagerRef.current.getPeerCount();
+    const peerCount = networkStatus.peerCount;
     const lastActivity = networkStatus.lastActivity;
     const timeSinceActivity = lastActivity ? Date.now() - lastActivity.getTime() : Infinity;
 
@@ -170,7 +231,7 @@ export const useMeshNetwork = (): MeshNetworkHook => {
 
     if (peerCount === 0) {
       quality = 'disconnected';
-    } else if (timeSinceActivity > 30000) { // 30 seconds
+    } else if (timeSinceActivity > 30000) {
       quality = 'poor';
     } else if (peerCount >= 3) {
       quality = 'excellent';
@@ -182,34 +243,49 @@ export const useMeshNetwork = (): MeshNetworkHook => {
       ...prev,
       connectionQuality: quality
     }));
-  }, [networkStatus.lastActivity]);
+  }, [networkStatus.peerCount, networkStatus.lastActivity]);
 
   // Send message to specific destination or broadcast
-  const sendMessage = useCallback((content: string, destination: string = 'broadcast', type: 'text' | 'voice' = 'text'): void => {
-    if (!webrtcManagerRef.current || !routingManagerRef.current) {
-      console.warn('Network not initialized');
-      return;
-    }
+  const sendMessage = useCallback(async (content: string, destination: string = 'broadcast', type: 'text' | 'voice' = 'text'): Promise<void> => {
+    if (isNativeRef.current && nativeBridgeRef.current) {
+      // Use native bridge
+      const message: MeshMessage = {
+        id: `${Date.now()}-${Math.random()}`,
+        sender: networkStatus.localId,
+        destination,
+        content,
+        type,
+        timestamp: Date.now(),
+        hopCount: 0,
+        sequenceNumber: 0
+      };
 
-    const message = routingManagerRef.current.createMessage(content, destination, type);
-    
-    if (webrtcManagerRef.current.getPeerCount() > 0) {
-      webrtcManagerRef.current.sendMessage(message);
-      
-      // Add to local messages if it's for us or broadcast
-      if (destination === 'broadcast' || destination === webrtcManagerRef.current.getLocalId()) {
-        setMessages(prev => [...prev, message]);
+      const success = await nativeBridgeRef.current.sendMessage(message);
+      if (success) {
+        if (destination === 'broadcast' || destination === networkStatus.localId) {
+          setMessages(prev => [...prev, message]);
+        }
       }
-    } else {
-      // Queue message for later if no peers connected
-      pendingMessagesRef.current.push(message);
+    } else if (!isNativeRef.current && webrtcManagerRef.current && routingManagerRef.current) {
+      // Use WebRTC
+      const message = routingManagerRef.current.createMessage(content, destination, type);
+      
+      if (webrtcManagerRef.current.getPeerCount() > 0) {
+        webrtcManagerRef.current.sendMessage(message);
+        
+        if (destination === 'broadcast' || destination === webrtcManagerRef.current.getLocalId()) {
+          setMessages(prev => [...prev, message]);
+        }
+      } else {
+        pendingMessagesRef.current.push(message);
+      }
     }
 
     setNetworkStatus(prev => ({
       ...prev,
       lastActivity: new Date()
     }));
-  }, []);
+  }, [networkStatus.localId]);
 
   // Convenience method for broadcasting
   const sendBroadcast = useCallback((content: string, type: 'text' | 'voice' = 'text'): void => {
@@ -218,6 +294,10 @@ export const useMeshNetwork = (): MeshNetworkHook => {
 
   // Get list of connected peers
   const getConnectedPeers = useCallback((): string[] => {
+    if (isNativeRef.current && nativeBridgeRef.current) {
+      // For native, we'll need to maintain a local cache since getConnectedPeers is async
+      return [];
+    }
     return webrtcManagerRef.current?.getConnectedPeers() || [];
   }, []);
 
@@ -226,6 +306,11 @@ export const useMeshNetwork = (): MeshNetworkHook => {
     if (qualityCheckIntervalRef.current) {
       clearInterval(qualityCheckIntervalRef.current);
       qualityCheckIntervalRef.current = null;
+    }
+
+    if (nativeBridgeRef.current) {
+      nativeBridgeRef.current.shutdown();
+      nativeBridgeRef.current = null;
     }
 
     if (routingManagerRef.current) {
