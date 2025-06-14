@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Power, 
@@ -17,7 +16,9 @@ import { ChannelSelector } from './radio/ChannelSelector';
 import { StatusDisplay } from './radio/StatusDisplay';
 import { PTTButton } from './radio/PTTButton';
 import { SettingsPanel } from './radio/SettingsPanel';
+import { Settings as AdvancedSettings } from '../pages/Settings';
 import { useRadioMesh } from '../hooks/useRadioMesh';
+import { channelMeshService } from '../services/ChannelMeshService';
 
 interface WalkieTalkieRadioProps {
   isOpen: boolean;
@@ -30,35 +31,38 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
   const [channel, setChannel] = useState(1);
   const [squelch, setSquelch] = useState(3);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [batteryLevel, setBatteryLevel] = useState(85);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   
   const { 
     isConnected, 
     peerCount, 
-    isTransmitting, 
+    isTransmitting,
+    isReceiving,
+    batteryLevel,
+    connectionQuality,
+    isOnline,
+    isWifiConnected,
+    isBluetoothEnabled,
     messages,
     sendMessage,
     startTransmission,
     stopTransmission 
   } = useRadioMesh(isPoweredOn, channel);
 
-  // Battery simulation
-  useEffect(() => {
-    if (!isPoweredOn) return;
-    
-    const interval = setInterval(() => {
-      setBatteryLevel(prev => Math.max(0, prev - 0.1));
-    }, 30000); // Drain battery slowly
-    
-    return () => clearInterval(interval);
-  }, [isPoweredOn]);
-
   const handlePowerToggle = () => {
     setIsPoweredOn(!isPoweredOn);
     if (isPoweredOn) {
       setIsSettingsOpen(false);
+      setShowAdvancedSettings(false);
     }
   };
+
+  // Sync volume with mesh service
+  useEffect(() => {
+    if (isPoweredOn) {
+      channelMeshService.setVolume(volume);
+    }
+  }, [volume, isPoweredOn]);
 
   if (!isOpen) return null;
 
@@ -100,7 +104,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
             </div>
           </div>
 
-          {/* Display Screen */}
+          {/* Enhanced Display Screen */}
           <div className="bg-black p-4">
             <div className={`rounded-lg p-4 transition-all duration-300 ${
               isPoweredOn 
@@ -117,10 +121,21 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                     </div>
                   </div>
                   <div className="text-green-300 text-xs font-mono">
-                    {peerCount} PEERS CONNECTED
+                    {peerCount} PEERS • {connectionQuality.toUpperCase()}
                   </div>
                   <div className="text-green-300 text-xs font-mono">
                     VOL: {volume} | SQL: {squelch}
+                  </div>
+                  <div className="flex items-center space-x-2 text-xs font-mono">
+                    <span className={isOnline ? 'text-blue-400' : 'text-gray-400'}>
+                      NET: {isOnline ? 'ON' : 'OFF'}
+                    </span>
+                    <span className={isWifiConnected ? 'text-blue-400' : 'text-gray-400'}>
+                      WIFI: {isWifiConnected ? 'ON' : 'OFF'}
+                    </span>
+                    <span className={isBluetoothEnabled ? 'text-blue-400' : 'text-gray-400'}>
+                      BT: {isBluetoothEnabled ? 'ON' : 'OFF'}
+                    </span>
                   </div>
                   {isTransmitting && (
                     <motion.div
@@ -129,6 +144,15 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                       className="text-red-400 text-xs font-mono font-bold"
                     >
                       *** TRANSMITTING ***
+                    </motion.div>
+                  )}
+                  {isReceiving && (
+                    <motion.div
+                      animate={{ opacity: [1, 0.5, 1] }}
+                      transition={{ repeat: Infinity, duration: 0.5 }}
+                      className="text-blue-400 text-xs font-mono font-bold"
+                    >
+                      *** RECEIVING ***
                     </motion.div>
                   )}
                 </div>
@@ -155,17 +179,31 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                 <Power className="w-6 h-6 text-white" />
               </button>
 
-              <button
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                disabled={!isPoweredOn}
-                className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
-                  isPoweredOn 
-                    ? 'bg-gray-700 border-gray-500 hover:bg-gray-600 text-white' 
-                    : 'bg-gray-800 border-gray-700 text-gray-500'
-                }`}
-              >
-                <Settings className="w-5 h-5" />
-              </button>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                  disabled={!isPoweredOn}
+                  className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
+                    isPoweredOn 
+                      ? 'bg-gray-700 border-gray-500 hover:bg-gray-600 text-white' 
+                      : 'bg-gray-800 border-gray-700 text-gray-500'
+                  }`}
+                >
+                  <Settings className="w-5 h-5" />
+                </button>
+
+                <button
+                  onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                  disabled={!isPoweredOn}
+                  className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
+                    isPoweredOn 
+                      ? 'bg-blue-700 border-blue-500 hover:bg-blue-600 text-white' 
+                      : 'bg-gray-800 border-gray-700 text-gray-500'
+                  }`}
+                >
+                  <span className="text-xs font-bold">ADV</span>
+                </button>
+              </div>
             </div>
 
             {/* Channel Selector */}
@@ -214,6 +252,13 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
               messages={messages}
               onSendMessage={sendMessage}
             />
+          )}
+        </AnimatePresence>
+
+        {/* Advanced Settings Modal */}
+        <AnimatePresence>
+          {showAdvancedSettings && isPoweredOn && (
+            <AdvancedSettings onClose={() => setShowAdvancedSettings(false)} />
           )}
         </AnimatePresence>
       </motion.div>
