@@ -1,7 +1,7 @@
 
 import { Device } from '@capacitor/device';
 import { Network } from '@capacitor/network';
-import { StatusBar } from '@capacitor/status-bar';
+import { Capacitor } from '@capacitor/core';
 
 export interface RealDeviceStatus {
   batteryLevel: number;
@@ -37,8 +37,10 @@ class DeviceStatusManager {
   private listeners: Set<(status: RealDeviceStatus) => void> = new Set();
   private updateInterval: NodeJS.Timeout | null = null;
   private networkListener: any = null;
+  private isNativeMode: boolean = false;
 
   constructor() {
+    this.isNativeMode = Capacitor.isNativePlatform();
     this.initializeDeviceInfo();
     this.setupListeners();
     this.startPeriodicUpdates();
@@ -55,7 +57,8 @@ class DeviceStatusManager {
         model: deviceInfo.model,
         platform: deviceInfo.platform,
         osVersion: deviceInfo.osVersion,
-        manufacturer: deviceInfo.manufacturer
+        manufacturer: deviceInfo.manufacturer,
+        isNative: this.isNativeMode
       });
 
       // Get initial network status
@@ -67,20 +70,17 @@ class DeviceStatusManager {
       this.notifyListeners();
     } catch (error) {
       console.error('Failed to initialize device info:', error);
+      this.fallbackToWebAPIs();
     }
   }
 
-  private setupListeners() {
-    // Network status listener
-    this.networkListener = Network.addListener('networkStatusChange', (status) => {
-      this.status.isOnline = status.connected;
-      this.status.isWifiConnected = status.connectionType === 'wifi';
-      this.status.networkType = status.connectionType || 'unknown';
-      this.updateSignalQuality();
-      this.notifyListeners();
-    });
-
-    // Browser online/offline events
+  private fallbackToWebAPIs() {
+    console.log('Using web API fallbacks');
+    this.status.deviceModel = navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop';
+    this.status.osVersion = navigator.platform;
+    this.status.isOnline = navigator.onLine;
+    
+    // Set up web-specific listeners
     window.addEventListener('online', () => {
       this.status.isOnline = true;
       this.updateSignalQuality();
@@ -93,9 +93,12 @@ class DeviceStatusManager {
       this.notifyListeners();
     });
 
-    // Battery events (if supported)
+    // Try to get battery info if available
     if ('getBattery' in navigator) {
       (navigator as any).getBattery().then((battery: any) => {
+        this.status.batteryLevel = Math.round(battery.level * 100);
+        this.status.isCharging = battery.charging;
+        
         battery.addEventListener('chargingchange', () => {
           this.status.isCharging = battery.charging;
           this.notifyListeners();
@@ -105,19 +108,59 @@ class DeviceStatusManager {
           this.status.batteryLevel = Math.round(battery.level * 100);
           this.notifyListeners();
         });
+        
+        this.notifyListeners();
+      }).catch(() => {
+        console.log('Battery API not available');
+        this.simulateBatteryForTesting();
       });
+    } else {
+      this.simulateBatteryForTesting();
+    }
+  }
+
+  private setupListeners() {
+    if (!this.isNativeMode) {
+      this.fallbackToWebAPIs();
+      return;
+    }
+
+    try {
+      // Network status listener
+      this.networkListener = Network.addListener('networkStatusChange', (status) => {
+        this.status.isOnline = status.connected;
+        this.status.isWifiConnected = status.connectionType === 'wifi';
+        this.status.networkType = status.connectionType || 'unknown';
+        this.updateSignalQuality();
+        this.notifyListeners();
+        
+        console.log('Network status changed:', status);
+      });
+
+      console.log('Native network listeners set up');
+    } catch (error) {
+      console.error('Failed to set up native listeners:', error);
+      this.fallbackToWebAPIs();
     }
   }
 
   private async updateNetworkStatus() {
     try {
-      const networkStatus = await Network.getStatus();
-      this.status.isOnline = networkStatus.connected;
-      this.status.isWifiConnected = networkStatus.connectionType === 'wifi';
-      this.status.networkType = networkStatus.connectionType || 'unknown';
+      if (this.isNativeMode) {
+        const networkStatus = await Network.getStatus();
+        this.status.isOnline = networkStatus.connected;
+        this.status.isWifiConnected = networkStatus.connectionType === 'wifi';
+        this.status.networkType = networkStatus.connectionType || 'unknown';
+        
+        console.log('Network status updated:', networkStatus);
+      } else {
+        this.status.isOnline = navigator.onLine;
+        this.status.networkType = this.status.isOnline ? 'wifi' : 'none';
+        this.status.isWifiConnected = this.status.isOnline;
+      }
       
       // Estimate signal strength based on connection type
-      this.estimateSignalStrength(networkStatus.connectionType);
+      this.estimateSignalStrength(this.status.networkType);
       this.updateSignalQuality();
     } catch (error) {
       console.error('Failed to get network status:', error);
@@ -130,26 +173,27 @@ class DeviceStatusManager {
 
   private async updateBatteryStatus() {
     try {
-      // Try to get battery info from device plugin
-      const batteryInfo = await Device.getBatteryInfo();
-      if (batteryInfo) {
-        this.status.batteryLevel = Math.round(batteryInfo.batteryLevel || 100);
-        this.status.isCharging = batteryInfo.isCharging || false;
-      }
-    } catch (error) {
-      // Fallback to browser battery API
-      if ('getBattery' in navigator) {
-        try {
-          const battery = await (navigator as any).getBattery();
-          this.status.batteryLevel = Math.round(battery.level * 100);
-          this.status.isCharging = battery.charging;
-        } catch {
-          console.log('Battery API not available, using simulated battery');
-          this.simulateBatteryDrain();
+      if (this.isNativeMode) {
+        // Try to get battery info from device plugin
+        const batteryInfo = await Device.getBatteryInfo();
+        if (batteryInfo) {
+          this.status.batteryLevel = Math.round(batteryInfo.batteryLevel || 100);
+          this.status.isCharging = batteryInfo.isCharging || false;
+          
+          console.log('Battery status updated:', {
+            level: this.status.batteryLevel,
+            charging: this.status.isCharging
+          });
         }
       } else {
-        this.simulateBatteryDrain();
+        // Web fallback handled in fallbackToWebAPIs
+        if (!('getBattery' in navigator)) {
+          this.simulateBatteryForTesting();
+        }
       }
+    } catch (error) {
+      console.error('Failed to get battery status:', error);
+      this.simulateBatteryForTesting();
     }
   }
 
@@ -184,19 +228,26 @@ class DeviceStatusManager {
     }
   }
 
-  private simulateBatteryDrain() {
-    // Simulate realistic battery drain for demonstration
-    const drainRate = 0.01; // 1% per minute when transmitting
-    const baseDrain = 0.001; // 0.1% per minute normally
+  private simulateBatteryForTesting() {
+    console.log('Using simulated battery for testing');
+    
+    // Start with a realistic battery level
+    this.status.batteryLevel = 85 + Math.random() * 15;
+    this.status.isCharging = Math.random() > 0.7; // 30% chance of charging
+    
+    // Simulate realistic battery drain
+    const drainRate = 0.001; // 0.1% per minute normally
     
     setInterval(() => {
-      if (this.status.batteryLevel > 0 && !this.status.isCharging) {
-        this.status.batteryLevel = Math.max(0, this.status.batteryLevel - baseDrain);
+      if (!this.status.isCharging && this.status.batteryLevel > 0) {
+        this.status.batteryLevel = Math.max(0, this.status.batteryLevel - drainRate);
         
         // Notify if battery is low
         if (this.status.batteryLevel <= 20 && this.status.batteryLevel > 19.9) {
           console.warn('Low battery warning');
         }
+        
+        this.notifyListeners();
       }
     }, 60000); // Check every minute
   }
@@ -237,16 +288,22 @@ class DeviceStatusManager {
 
   public async checkBluetoothStatus(): Promise<boolean> {
     try {
-      // In a real app, you would use a Bluetooth plugin
-      // For now, we'll simulate based on device capabilities
-      if ('bluetooth' in navigator) {
-        const bluetooth = (navigator as any).bluetooth;
-        const available = await bluetooth.getAvailability();
-        this.status.isBluetoothEnabled = available;
-        return available;
+      if (this.isNativeMode) {
+        // In a real app, you would use a Bluetooth plugin
+        // For now, we'll check if it's in active transports
+        return this.status.isBluetoothEnabled;
+      } else {
+        // Web fallback - check if bluetooth API is available
+        if ('bluetooth' in navigator) {
+          const bluetooth = (navigator as any).bluetooth;
+          const available = await bluetooth.getAvailability();
+          this.status.isBluetoothEnabled = available;
+          return available;
+        }
+        return false;
       }
-      return false;
-    } catch {
+    } catch (error) {
+      console.error('Bluetooth check failed:', error);
       return false;
     }
   }

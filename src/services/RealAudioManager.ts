@@ -1,6 +1,6 @@
 
 import { Microphone } from '@capacitor/microphone';
-import { MediaRecorder as CapacitorMediaRecorder } from '@capacitor-community/media';
+import { Capacitor } from '@capacitor/core';
 
 export interface AudioConfig {
   sampleRate: number;
@@ -19,6 +19,8 @@ class RealAudioManager {
   private gainNode: GainNode | null = null;
   private compressionNode: DynamicsCompressorNode | null = null;
   private volume: number = 0.8;
+  private isNativeMode: boolean = false;
+  private permissionsGranted: boolean = false;
   
   private readonly audioConfig: AudioConfig = {
     sampleRate: 48000,
@@ -28,7 +30,9 @@ class RealAudioManager {
   };
 
   constructor() {
+    this.isNativeMode = Capacitor.isNativePlatform();
     this.initializeAudioContext();
+    console.log(`Audio manager initialized in ${this.isNativeMode ? 'native' : 'web'} mode`);
   }
 
   private async initializeAudioContext() {
@@ -54,7 +58,7 @@ class RealAudioManager {
       
       this.setVolume(this.volume);
       
-      console.log('Audio context initialized');
+      console.log('Audio context initialized successfully');
     } catch (error) {
       console.error('Failed to initialize audio context:', error);
     }
@@ -62,18 +66,38 @@ class RealAudioManager {
 
   public async requestPermissions(): Promise<boolean> {
     try {
-      // Request microphone permissions using Capacitor
-      const permission = await Microphone.requestPermissions();
-      
-      if (permission.microphone === 'granted') {
-        console.log('Microphone permission granted');
-        return true;
+      if (this.isNativeMode) {
+        // Request microphone permissions using Capacitor
+        console.log('Requesting native microphone permissions...');
+        const permission = await Microphone.requestPermissions();
+        
+        this.permissionsGranted = permission.microphone === 'granted';
+        
+        if (this.permissionsGranted) {
+          console.log('Native microphone permission granted');
+        } else {
+          console.warn('Native microphone permission denied:', permission);
+        }
+        
+        return this.permissionsGranted;
       } else {
-        console.warn('Microphone permission denied');
-        return false;
+        // Web fallback - request through getUserMedia
+        console.log('Requesting web microphone permissions...');
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop()); // Stop immediately, just checking permission
+          this.permissionsGranted = true;
+          console.log('Web microphone permission granted');
+          return true;
+        } catch (error) {
+          console.warn('Web microphone permission denied:', error);
+          this.permissionsGranted = false;
+          return false;
+        }
       }
     } catch (error) {
       console.error('Failed to request microphone permissions:', error);
+      this.permissionsGranted = false;
       return false;
     }
   }
@@ -83,9 +107,12 @@ class RealAudioManager {
 
     try {
       // Ensure permissions are granted
-      const hasPermission = await this.requestPermissions();
-      if (!hasPermission) {
-        throw new Error('Microphone permission not granted');
+      if (!this.permissionsGranted) {
+        const hasPermission = await this.requestPermissions();
+        if (!hasPermission) {
+          console.error('Cannot start recording: microphone permission not granted');
+          return false;
+        }
       }
 
       // Resume audio context if suspended
@@ -94,7 +121,7 @@ class RealAudioManager {
       }
 
       // Get user media with optimal settings for radio communication
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      const constraints = {
         audio: {
           echoCancellation: false, // Keep natural radio feel
           noiseSuppression: false, // We want to hear background
@@ -102,7 +129,10 @@ class RealAudioManager {
           sampleRate: this.audioConfig.sampleRate,
           channelCount: this.audioConfig.channels
         }
-      });
+      };
+
+      console.log('Starting audio recording with constraints:', constraints);
+      this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
 
       // Create media recorder
       const mimeType = this.getSupportedMimeType();
@@ -116,18 +146,24 @@ class RealAudioManager {
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           this.audioChunks.push(event.data);
+          console.log(`Audio chunk received: ${event.data.size} bytes`);
         }
       };
 
       this.mediaRecorder.onstop = async () => {
+        console.log('Media recorder stopped');
         await this.processRecordedAudio();
+      };
+
+      this.mediaRecorder.onerror = (event) => {
+        console.error('Media recorder error:', event);
       };
 
       // Start recording with 100ms chunks for real-time streaming
       this.mediaRecorder.start(100);
       this.isRecording = true;
 
-      console.log('Recording started');
+      console.log('Audio recording started successfully');
       return true;
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -137,7 +173,10 @@ class RealAudioManager {
   }
 
   public async stopRecording(): Promise<ArrayBuffer | null> {
-    if (!this.isRecording || !this.mediaRecorder) return null;
+    if (!this.isRecording || !this.mediaRecorder) {
+      console.warn('Cannot stop recording: not currently recording');
+      return null;
+    }
 
     return new Promise((resolve) => {
       if (!this.mediaRecorder) {
@@ -146,6 +185,7 @@ class RealAudioManager {
       }
 
       this.mediaRecorder.onstop = async () => {
+        console.log('Processing recorded audio...');
         const audioBuffer = await this.processRecordedAudio();
         resolve(audioBuffer);
       };
@@ -155,21 +195,29 @@ class RealAudioManager {
 
       // Stop media stream
       if (this.mediaStream) {
-        this.mediaStream.getTracks().forEach(track => track.stop());
+        this.mediaStream.getTracks().forEach(track => {
+          track.stop();
+          console.log('Audio track stopped');
+        });
         this.mediaStream = null;
       }
 
-      console.log('Recording stopped');
+      console.log('Recording stopped successfully');
     });
   }
 
   private async processRecordedAudio(): Promise<ArrayBuffer | null> {
-    if (this.audioChunks.length === 0) return null;
+    if (this.audioChunks.length === 0) {
+      console.warn('No audio chunks to process');
+      return null;
+    }
 
     try {
       const audioBlob = new Blob(this.audioChunks, { 
         type: this.getSupportedMimeType() 
       });
+      
+      console.log(`Processing audio blob: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
       
       // Convert to ArrayBuffer for transmission
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -178,6 +226,7 @@ class RealAudioManager {
       const processedBuffer = await this.applyRadioProcessing(arrayBuffer);
       
       this.audioChunks = [];
+      console.log(`Audio processing complete: ${processedBuffer.byteLength} bytes`);
       return processedBuffer;
     } catch (error) {
       console.error('Failed to process recorded audio:', error);
@@ -186,7 +235,10 @@ class RealAudioManager {
   }
 
   private async applyRadioProcessing(audioBuffer: ArrayBuffer): Promise<ArrayBuffer> {
-    if (!this.audioContext) return audioBuffer;
+    if (!this.audioContext) {
+      console.warn('No audio context for processing, returning original buffer');
+      return audioBuffer;
+    }
 
     try {
       // Decode audio data
@@ -226,7 +278,7 @@ class RealAudioManager {
   }
 
   private applySimpleBandpass(input: Float32Array, output: Float32Array, sampleRate: number) {
-    // Simple bandpass filter implementation
+    // Simple bandpass filter implementation for radio effect
     const lowCutoff = 300 / (sampleRate / 2);
     const highCutoff = 3000 / (sampleRate / 2);
     
@@ -255,7 +307,10 @@ class RealAudioManager {
   }
 
   public async playReceivedAudio(audioData: ArrayBuffer): Promise<void> {
-    if (!this.audioContext || this.isPlaying) return;
+    if (!this.audioContext || this.isPlaying) {
+      console.warn('Cannot play audio: no context or already playing');
+      return;
+    }
 
     try {
       this.isPlaying = true;
@@ -274,11 +329,12 @@ class RealAudioManager {
       
       source.onended = () => {
         this.isPlaying = false;
+        console.log('Audio playback finished');
       };
       
       source.start();
       
-      console.log('Playing received audio');
+      console.log(`Playing received audio: ${audioData.byteLength} bytes`);
     } catch (error) {
       console.error('Failed to play received audio:', error);
       this.isPlaying = false;
@@ -293,6 +349,7 @@ class RealAudioManager {
       return await this.audioContext.decodeAudioData(audioData.slice(0));
     } catch {
       // Fallback: treat as raw PCM data
+      console.log('Decoding as raw PCM data');
       const float32Data = new Float32Array(audioData);
       const audioBuffer = this.audioContext.createBuffer(1, float32Data.length, this.audioConfig.sampleRate);
       audioBuffer.getChannelData(0).set(float32Data);
@@ -301,53 +358,62 @@ class RealAudioManager {
   }
 
   public playRadioSound(type: 'ptt_on' | 'ptt_off' | 'static' | 'beep' | 'squelch'): void {
-    if (!this.audioContext) return;
+    if (!this.audioContext) {
+      console.warn('Cannot play radio sound: no audio context');
+      return;
+    }
 
-    const oscillator = this.audioContext.createOscillator();
-    const gainNode = this.audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(this.audioContext.destination);
+    try {
+      const oscillator = this.audioContext.createOscillator();
+      const gainNode = this.audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(this.audioContext.destination);
 
-    switch (type) {
-      case 'ptt_on':
-        // Quick ascending beep
-        oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(1200, this.audioContext.currentTime + 0.1);
-        gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
-        oscillator.start();
-        oscillator.stop(this.audioContext.currentTime + 0.1);
-        break;
-        
-      case 'ptt_off':
-        // Quick descending beep
-        oscillator.frequency.setValueAtTime(1200, this.audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(800, this.audioContext.currentTime + 0.1);
-        gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
-        oscillator.start();
-        oscillator.stop(this.audioContext.currentTime + 0.1);
-        break;
-        
-      case 'squelch':
-        // Short static burst
-        this.generateStaticNoise(0.2, 0.1);
-        break;
-        
-      case 'static':
-        // Longer static
-        this.generateStaticNoise(1.0, 0.05);
-        break;
-        
-      case 'beep':
-        // Single tone beep
-        oscillator.frequency.setValueAtTime(1000, this.audioContext.currentTime);
-        gainNode.gain.setValueAtTime(0.2, this.audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
-        oscillator.start();
-        oscillator.stop(this.audioContext.currentTime + 0.3);
-        break;
+      switch (type) {
+        case 'ptt_on':
+          // Quick ascending beep
+          oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime);
+          oscillator.frequency.exponentialRampToValueAtTime(1200, this.audioContext.currentTime + 0.1);
+          gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+          oscillator.start();
+          oscillator.stop(this.audioContext.currentTime + 0.1);
+          break;
+          
+        case 'ptt_off':
+          // Quick descending beep
+          oscillator.frequency.setValueAtTime(1200, this.audioContext.currentTime);
+          oscillator.frequency.exponentialRampToValueAtTime(800, this.audioContext.currentTime + 0.1);
+          gainNode.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
+          oscillator.start();
+          oscillator.stop(this.audioContext.currentTime + 0.1);
+          break;
+          
+        case 'squelch':
+          // Short static burst
+          this.generateStaticNoise(0.2, 0.1);
+          break;
+          
+        case 'static':
+          // Longer static
+          this.generateStaticNoise(1.0, 0.05);
+          break;
+          
+        case 'beep':
+          // Single tone beep
+          oscillator.frequency.setValueAtTime(1000, this.audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0.2, this.audioContext.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.3);
+          oscillator.start();
+          oscillator.stop(this.audioContext.currentTime + 0.3);
+          break;
+      }
+      
+      console.log(`Played radio sound: ${type}`);
+    } catch (error) {
+      console.error(`Failed to play radio sound ${type}:`, error);
     }
   }
 
@@ -373,6 +439,7 @@ class RealAudioManager {
     if (this.gainNode) {
       this.gainNode.gain.setValueAtTime(this.volume, this.audioContext?.currentTime || 0);
     }
+    console.log(`Volume set to: ${this.volume * 100}%`);
   }
 
   private getSupportedMimeType(): string {
@@ -385,10 +452,12 @@ class RealAudioManager {
     
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) {
+        console.log(`Using MIME type: ${type}`);
         return type;
       }
     }
     
+    console.warn('No supported MIME type found, using default');
     return 'audio/webm';
   }
 
@@ -400,7 +469,13 @@ class RealAudioManager {
     return this.isPlaying;
   }
 
+  public hasPermissions(): boolean {
+    return this.permissionsGranted;
+  }
+
   public destroy(): void {
+    console.log('Destroying audio manager...');
+    
     if (this.mediaRecorder && this.isRecording) {
       this.mediaRecorder.stop();
     }
@@ -412,6 +487,8 @@ class RealAudioManager {
     if (this.audioContext?.state !== 'closed') {
       this.audioContext?.close();
     }
+    
+    console.log('Audio manager destroyed');
   }
 }
 
