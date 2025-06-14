@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Power, 
@@ -387,5 +386,3 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
     </div>
   );
 };
-
-    
