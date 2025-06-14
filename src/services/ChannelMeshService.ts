@@ -1,6 +1,5 @@
-
 import { MeshNetworking, type MeshPeer, type MeshMessage, type MeshNetworkStatus } from '../plugins/mesh-networking-plugin';
-import { Capacitor } from '@capacitor/core';
+import { registerPlugin } from '../utils/capacitorUtils';
 
 export interface ChannelTransmission {
   id: string;
@@ -143,7 +142,10 @@ class ChannelMeshService {
 
   private async updateDeviceStatus(networkStatus?: MeshNetworkStatus) {
     try {
-      if (Capacitor.isNativePlatform()) {
+      // Check if we're in a native environment
+      const isNative = window.navigator.userAgent.includes('Capacitor');
+      
+      if (isNative) {
         // Get real battery level from native plugin
         const status = networkStatus || await MeshNetworking.getNetworkStatus();
         this.deviceStatus.batteryLevel = status.batteryLevel || this.deviceStatus.batteryLevel;
