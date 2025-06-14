@@ -1,5 +1,6 @@
 import { MeshNetworking, type MeshPeer, type MeshMessage, type MeshNetworkStatus } from '../plugins/mesh-networking-plugin';
-import { registerPlugin } from '../utils/capacitorUtils';
+import { webrtcCommunication } from './WebRTCCommunication';
+import { deviceStatusManager } from './DeviceStatusManager';
 
 export interface ChannelTransmission {
   id: string;
@@ -25,119 +26,136 @@ class ChannelMeshService {
   private deviceId: string = '';
   private channelListeners: Map<number, Set<(transmission: ChannelTransmission) => void>> = new Map();
   private peersByChannel: Map<number, Set<string>> = new Map();
-  private deviceStatus: DeviceStatus = {
-    batteryLevel: 100,
-    isOnline: navigator.onLine,
-    isWifiConnected: false,
-    isBluetoothEnabled: false,
-    volume: 7,
-    signalQuality: 'none'
-  };
   private statusListeners: Set<(status: DeviceStatus) => void> = new Set();
   private transmissionHistory: Map<string, ChannelTransmission> = new Map();
+  private isNativeMode: boolean = false;
 
   constructor() {
     this.initializeService();
-    this.setupNetworkListeners();
-    this.startPeriodicUpdates();
+    this.setupIntegrations();
   }
 
   private async initializeService() {
     try {
-      // Initialize mesh networking
-      await MeshNetworking.startNetwork();
+      // Check if we're in a native environment
+      this.isNativeMode = window.navigator.userAgent.includes('Capacitor');
       
-      // Get device status
-      const networkStatus = await MeshNetworking.getNetworkStatus();
-      this.deviceStatus.batteryLevel = networkStatus.batteryLevel || 100;
+      if (this.isNativeMode) {
+        // Initialize native mesh networking
+        await MeshNetworking.startNetwork();
+        this.setupNativeListeners();
+      } else {
+        // Use WebRTC for web-based testing
+        this.initializeWebRTCMode();
+      }
       
-      // Set up event listeners for peer discovery and messages
-      MeshNetworking.addListener('peerDiscovered', (peer: MeshPeer) => {
-        console.log('Peer discovered:', peer);
-        this.handlePeerDiscovered(peer);
-      });
-
-      MeshNetworking.addListener('peerLost', (peerId: string) => {
-        console.log('Peer lost:', peerId);
-        this.handlePeerLost(peerId);
-      });
-
-      MeshNetworking.addListener('messageReceived', (message: MeshMessage) => {
-        console.log('Message received:', message);
-        this.handleIncomingMessage(message);
-      });
-
-      MeshNetworking.addListener('networkStatusChanged', (status: MeshNetworkStatus) => {
-        this.updateDeviceStatus(status);
-      });
-
-      console.log('Channel mesh service initialized');
+      console.log(`Channel mesh service initialized in ${this.isNativeMode ? 'native' : 'WebRTC'} mode`);
     } catch (error) {
       console.error('Failed to initialize channel mesh service:', error);
-      // Fallback to local simulation mode
-      this.initializeFallbackMode();
+      // Always fallback to WebRTC mode
+      this.initializeWebRTCMode();
     }
   }
 
-  private initializeFallbackMode() {
-    console.log('Running in fallback simulation mode');
-    this.deviceId = `SIM-${Math.random().toString(36).substr(2, 9)}`;
+  private initializeWebRTCMode() {
+    console.log('Running in WebRTC communication mode');
+    this.deviceId = `WEBRTC-${Math.random().toString(36).substr(2, 9)}`;
+    this.isNativeMode = false;
     
-    // Simulate some peers for testing
-    setTimeout(() => {
-      this.simulatePeerDiscovery();
-    }, 2000);
-  }
+    // Set up WebRTC event listeners
+    webrtcCommunication.on('peer-connected', (peerId: string) => {
+      this.addPeerToChannel(this.activeChannel, peerId);
+      console.log(`WebRTC peer connected: ${peerId}`);
+    });
 
-  private simulatePeerDiscovery() {
-    const mockPeers = [
-      { id: 'PEER-001', name: 'Unit Alpha', channel: 1 },
-      { id: 'PEER-002', name: 'Unit Beta', channel: 1 },
-      { id: 'PEER-003', name: 'Unit Charlie', channel: 2 }
-    ];
+    webrtcCommunication.on('peer-disconnected', (peerId: string) => {
+      this.handlePeerLost(peerId);
+      console.log(`WebRTC peer disconnected: ${peerId}`);
+    });
 
-    mockPeers.forEach(peer => {
-      this.addPeerToChannel(peer.channel, peer.id);
-      console.log(`Simulated peer ${peer.name} on channel ${peer.channel}`);
+    webrtcCommunication.on('message-received', (transmission: any) => {
+      this.handleWebRTCMessage(transmission);
+    });
+
+    webrtcCommunication.on('audio-received', (audioData: any) => {
+      this.handleWebRTCAudio(audioData);
     });
   }
 
-  private setupNetworkListeners() {
-    // Monitor online/offline status
-    window.addEventListener('online', () => {
-      this.deviceStatus.isOnline = true;
-      this.notifyStatusListeners();
+  private setupNativeListeners() {
+    // Set up native mesh networking listeners
+    MeshNetworking.addListener('peerDiscovered', (peer: MeshPeer) => {
+      console.log('Native peer discovered:', peer);
+      this.handlePeerDiscovered(peer);
     });
 
-    window.addEventListener('offline', () => {
-      this.deviceStatus.isOnline = false;
-      this.notifyStatusListeners();
+    MeshNetworking.addListener('peerLost', (peerId: string) => {
+      console.log('Native peer lost:', peerId);
+      this.handlePeerLost(peerId);
     });
 
-    // Monitor network connection changes
-    if ('connection' in navigator) {
-      const connection = (navigator as any).connection;
-      connection.addEventListener('change', () => {
-        this.deviceStatus.isWifiConnected = connection.type === 'wifi';
-        this.updateSignalQuality();
-        this.notifyStatusListeners();
-      });
+    MeshNetworking.addListener('messageReceived', (message: MeshMessage) => {
+      console.log('Native message received:', message);
+      this.handleIncomingMessage(message);
+    });
+
+    MeshNetworking.addListener('networkStatusChanged', (status: MeshNetworkStatus) => {
+      this.updateFromNativeStatus(status);
+    });
+  }
+
+  private setupIntegrations() {
+    // Integrate with device status manager
+    deviceStatusManager.onStatusChange((status) => {
+      // Update our internal status to match real device status
+      this.notifyStatusListeners();
+    });
+  }
+
+  private handleWebRTCMessage(transmission: any) {
+    const channelTransmission: ChannelTransmission = {
+      id: transmission.id || `webrtc-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      senderId: transmission.senderId,
+      channel: transmission.channel,
+      content: transmission.content,
+      type: 'text',
+      timestamp: transmission.timestamp,
+      signalStrength: 85 + Math.random() * 15
+    };
+
+    this.processTransmission(channelTransmission);
+  }
+
+  private handleWebRTCAudio(audioData: any) {
+    const audioTransmission: ChannelTransmission = {
+      id: `audio-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      senderId: audioData.senderId,
+      channel: audioData.channel,
+      content: audioData.audioData,
+      type: 'voice',
+      timestamp: audioData.timestamp,
+      signalStrength: 80 + Math.random() * 20
+    };
+
+    this.processTransmission(audioTransmission);
+  }
+
+  private processTransmission(transmission: ChannelTransmission) {
+    // Only process messages for the current channel
+    if (transmission.channel !== this.activeChannel) {
+      return;
     }
-  }
 
-  private startPeriodicUpdates() {
-    // Update device status every 5 seconds
-    setInterval(async () => {
-      await this.updateDeviceStatus();
-    }, 5000);
+    // Store transmission
+    this.transmissionHistory.set(transmission.id, transmission);
 
-    // Battery monitoring (simulated decrease when transmitting)
-    setInterval(() => {
-      if (this.deviceStatus.batteryLevel > 0) {
-        this.deviceStatus.batteryLevel = Math.max(0, this.deviceStatus.batteryLevel - 0.01);
-        this.notifyStatusListeners();
-      }
-    }, 30000);
+    // Notify channel listeners
+    const listeners = this.channelListeners.get(transmission.channel);
+    if (listeners) {
+      listeners.forEach(listener => listener(transmission));
+    }
+
+    console.log(`Processed transmission on channel ${transmission.channel}:`, transmission);
   }
 
   private async updateDeviceStatus(networkStatus?: MeshNetworkStatus) {
@@ -253,14 +271,23 @@ class ChannelMeshService {
   }
 
   private notifyStatusListeners() {
-    this.statusListeners.forEach(listener => listener(this.deviceStatus));
+    const status = this.getDeviceStatus();
+    this.statusListeners.forEach(listener => listener(status));
   }
 
   // Public API methods
   public setChannel(channel: number) {
     if (channel >= 1 && channel <= 99) {
       this.activeChannel = channel;
-      this.updateSignalQuality();
+      
+      if (this.isNativeMode) {
+        // Native channel switching logic
+        this.updateSignalQuality();
+      } else {
+        // WebRTC channel switching
+        webrtcCommunication.setChannel(channel);
+      }
+      
       console.log(`Switched to channel ${channel}`);
     }
   }
@@ -270,7 +297,11 @@ class ChannelMeshService {
   }
 
   public getPeersOnChannel(channel: number): number {
-    return this.peersByChannel.get(channel)?.size || 0;
+    if (this.isNativeMode) {
+      return this.peersByChannel.get(channel)?.size || 0;
+    } else {
+      return webrtcCommunication.getPeerCount();
+    }
   }
 
   public getPeersOnCurrentChannel(): number {
@@ -279,29 +310,28 @@ class ChannelMeshService {
 
   public async transmitVoice(audioData: ArrayBuffer): Promise<boolean> {
     try {
-      const message: MeshMessage = {
-        id: `voice-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        sender: this.deviceId,
-        destination: 'broadcast',
-        payload: JSON.stringify({
-          channel: this.activeChannel,
-          audioData: this.arrayBufferToBase64(audioData)
-        }),
-        timestamp: Date.now(),
-        hops: 0,
-        type: 'voice',
-        maxHops: 5
-      };
+      if (this.isNativeMode) {
+        // Use native mesh networking
+        const message: MeshMessage = {
+          id: `voice-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          sender: this.deviceId,
+          destination: 'broadcast',
+          payload: JSON.stringify({
+            channel: this.activeChannel,
+            audioData: this.arrayBufferToBase64(audioData)
+          }),
+          timestamp: Date.now(),
+          hops: 0,
+          type: 'voice',
+          maxHops: 5
+        };
 
-      const result = await MeshNetworking.sendMessage({ message });
-      
-      if (result.success) {
-        // Drain battery slightly on transmission
-        this.deviceStatus.batteryLevel = Math.max(0, this.deviceStatus.batteryLevel - 0.1);
-        this.notifyStatusListeners();
+        const result = await MeshNetworking.sendMessage({ message });
+        return result.success;
+      } else {
+        // Use WebRTC
+        return webrtcCommunication.sendAudioData(audioData);
       }
-      
-      return result.success;
     } catch (error) {
       console.error('Voice transmission failed:', error);
       return false;
@@ -310,22 +340,28 @@ class ChannelMeshService {
 
   public async transmitText(text: string): Promise<boolean> {
     try {
-      const message: MeshMessage = {
-        id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        sender: this.deviceId,
-        destination: 'broadcast',
-        payload: JSON.stringify({
-          channel: this.activeChannel,
-          text
-        }),
-        timestamp: Date.now(),
-        hops: 0,
-        type: 'text',
-        maxHops: 5
-      };
+      if (this.isNativeMode) {
+        // Use native mesh networking
+        const message: MeshMessage = {
+          id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          sender: this.deviceId,
+          destination: 'broadcast',
+          payload: JSON.stringify({
+            channel: this.activeChannel,
+            text
+          }),
+          timestamp: Date.now(),
+          hops: 0,
+          type: 'text',
+          maxHops: 5
+        };
 
-      const result = await MeshNetworking.sendMessage({ message });
-      return result.success;
+        const result = await MeshNetworking.sendMessage({ message });
+        return result.success;
+      } else {
+        // Use WebRTC
+        return webrtcCommunication.sendTextMessage(text);
+      }
     } catch (error) {
       console.error('Text transmission failed:', error);
       return false;
@@ -362,7 +398,25 @@ class ChannelMeshService {
   }
 
   public getDeviceStatus(): DeviceStatus {
-    return { ...this.deviceStatus };
+    // Get real device status from device status manager
+    const realStatus = deviceStatusManager.getStatus();
+    
+    return {
+      batteryLevel: realStatus.batteryLevel,
+      isOnline: realStatus.isOnline,
+      isWifiConnected: realStatus.isWifiConnected,
+      isBluetoothEnabled: realStatus.isBluetoothEnabled,
+      volume: realStatus.volume,
+      signalQuality: realStatus.signalQuality
+    };
+  }
+
+  public isConnected(): boolean {
+    if (this.isNativeMode) {
+      return this.getPeersOnCurrentChannel() > 0;
+    } else {
+      return webrtcCommunication.isNetworkConnected();
+    }
   }
 
   public setVolume(volume: number) {
