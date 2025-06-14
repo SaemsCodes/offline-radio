@@ -1,5 +1,6 @@
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useMeshNetwork } from './useMeshNetwork';
 
 interface Message {
   id: string;
@@ -10,53 +11,53 @@ interface Message {
 }
 
 export const useRadioMesh = (isPoweredOn: boolean, channel: number) => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [peerCount, setPeerCount] = useState(0);
   const [isTransmitting, setIsTransmitting] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const webrtcManager = useRef<any>(null);
+  const { 
+    networkStatus, 
+    messages: meshMessages, 
+    sendMessage: sendMeshMessage,
+    initializeNetwork,
+    destroyNetwork 
+  } = useMeshNetwork();
 
-  // Initialize mesh network when powered on
+  // Convert mesh messages to radio message format
+  const messages: Message[] = meshMessages.map(msg => ({
+    id: msg.id,
+    sender: msg.sender,
+    message: msg.content,
+    timestamp: new Date(msg.timestamp),
+    type: msg.type as 'text' | 'voice'
+  }));
+
+  // Initialize/destroy network based on power state
   useEffect(() => {
-    if (isPoweredOn && !webrtcManager.current) {
-      // Initialize WebRTC mesh network
+    if (isPoweredOn) {
       console.log(`Radio powered on - Channel ${channel}`);
-      
-      // Simulate connection after a delay
-      const connectTimer = setTimeout(() => {
-        setIsConnected(true);
-        setPeerCount(Math.floor(Math.random() * 5) + 1);
-      }, 2000);
-
-      return () => clearTimeout(connectTimer);
-    } else if (!isPoweredOn) {
-      setIsConnected(false);
-      setPeerCount(0);
+      initializeNetwork();
+    } else {
+      destroyNetwork();
       setIsTransmitting(false);
-      webrtcManager.current = null;
     }
-  }, [isPoweredOn, channel]);
+  }, [isPoweredOn, channel, initializeNetwork, destroyNetwork]);
 
   const sendMessage = useCallback((message: string) => {
-    if (!isPoweredOn || !isConnected) return;
+    if (!isPoweredOn || !networkStatus.isConnected) {
+      console.warn('Cannot send message: radio off or not connected');
+      return;
+    }
 
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      sender: 'You',
-      message,
-      timestamp: new Date(),
-      type: 'text'
-    };
-
-    setMessages(prev => [...prev, newMessage]);
+    sendMeshMessage(message, 'broadcast', 'text');
     console.log('Sending message:', message);
-  }, [isPoweredOn, isConnected]);
+  }, [isPoweredOn, networkStatus.isConnected, sendMeshMessage]);
 
   const startTransmission = useCallback(() => {
-    if (!isPoweredOn || !isConnected) return;
+    if (!isPoweredOn || !networkStatus.isConnected) {
+      console.warn('Cannot start transmission: radio off or not connected');
+      return;
+    }
     setIsTransmitting(true);
     console.log('Started transmission');
-  }, [isPoweredOn, isConnected]);
+  }, [isPoweredOn, networkStatus.isConnected]);
 
   const stopTransmission = useCallback(() => {
     setIsTransmitting(false);
@@ -64,8 +65,8 @@ export const useRadioMesh = (isPoweredOn: boolean, channel: number) => {
   }, []);
 
   return {
-    isConnected,
-    peerCount,
+    isConnected: networkStatus.isConnected,
+    peerCount: networkStatus.peerCount,
     isTransmitting,
     messages,
     sendMessage,

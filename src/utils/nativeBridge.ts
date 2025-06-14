@@ -1,6 +1,11 @@
 // src/utils/nativeBridge.ts
 import { registerPlugin } from './capacitorUtils';
 
+// Define base plugin interface
+interface Plugin {
+  addListener(eventName: string, listenerFunc: (...args: any[]) => void): Promise<any>;
+  removeAllListeners(): Promise<void>;
+}
 
 // Define plugin interfaces
 interface NativeAudioPlugin extends Plugin {
