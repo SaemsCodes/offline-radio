@@ -1,11 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { 
   Power, 
-  Volume2, 
-  VolumeX, 
   Settings, 
   Antenna,
-  Battery,
   Signal,
   WifiOff,
   Wifi
@@ -17,8 +15,8 @@ import { StatusDisplay } from './radio/StatusDisplay';
 import { PTTButton } from './radio/PTTButton';
 import { SettingsPanel } from './radio/SettingsPanel';
 import { Settings as AdvancedSettings } from '../pages/Settings';
-import { useRadioMesh } from '../hooks/useRadioMesh';
-import { channelMeshService } from '../services/ChannelMeshService';
+import { useUnifiedRadioMesh } from '../hooks/useUnifiedRadioMesh';
+import { unifiedMeshService } from '../services/UnifiedMeshService';
 
 interface WalkieTalkieRadioProps {
   isOpen: boolean;
@@ -47,7 +45,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
     sendMessage,
     startTransmission,
     stopTransmission 
-  } = useRadioMesh(isPoweredOn, channel);
+  } = useUnifiedRadioMesh(isPoweredOn, channel);
 
   const handlePowerToggle = () => {
     setIsPoweredOn(!isPoweredOn);
@@ -60,7 +58,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
   // Sync volume with mesh service
   useEffect(() => {
     if (isPoweredOn) {
-      channelMeshService.setVolume(volume);
+      unifiedMeshService.setVolume(volume);
     }
   }, [volume, isPoweredOn]);
 
@@ -68,7 +66,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Background overlay with rugged terrain */}
+      {/* Background overlay */}
       <div 
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
         style={{
