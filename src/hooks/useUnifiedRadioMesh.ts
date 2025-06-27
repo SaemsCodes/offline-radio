@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { unifiedMeshService, type DeviceStatus, type ChannelTransmission } from '../services/UnifiedMeshService';
+import { useAudioManager } from './useAudioManager';
 
 interface Message {
   id: string;
@@ -24,6 +25,12 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
   });
   const [messages, setMessages] = useState<Message[]>([]);
   const [isReceiving, setIsReceiving] = useState(false);
+
+  const { 
+    playAudio, 
+    metrics: audioMetrics, 
+    isInitialized: audioInitialized 
+  } = useAudioManager();
 
   // Update channel when it changes
   useEffect(() => {
@@ -68,11 +75,16 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
         return [...prev, message].slice(-50);
       });
 
+      // Play received voice messages
+      if (transmission.type === 'voice' && transmission.content instanceof ArrayBuffer) {
+        playAudio(transmission.content);
+      }
+
       setTimeout(() => setIsReceiving(false), 1000);
     });
 
     return unsubscribe;
-  }, [isPoweredOn, channel]);
+  }, [isPoweredOn, channel, playAudio]);
 
   const getTextFromTransmission = (transmission: ChannelTransmission): string => {
     try {
@@ -112,30 +124,36 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
     }
   }, [isPoweredOn, deviceStatus.signalQuality, channel]);
 
-  const startTransmission = useCallback(async () => {
+  const handleAudioData = useCallback(async (audioData: Blob) => {
     if (!isPoweredOn || deviceStatus.signalQuality === 'none') {
-      console.warn('Cannot start transmission: radio off or no signal');
+      console.warn('Cannot transmit audio: radio off or no signal');
       return;
     }
-    
-    setIsTransmitting(true);
-  }, [isPoweredOn, deviceStatus.signalQuality]);
 
-  const stopTransmission = useCallback(async () => {
-    setIsTransmitting(false);
-    
-    if (isPoweredOn && deviceStatus.signalQuality !== 'none') {
-      const simulatedAudio = new ArrayBuffer(1024);
-      await unifiedMeshService.transmitVoice(simulatedAudio);
+    try {
+      const arrayBuffer = await audioData.arrayBuffer();
+      const success = await unifiedMeshService.transmitVoice(arrayBuffer);
+      
+      if (success) {
+        const voiceMessage: Message = {
+          id: `voice-${Date.now()}`,
+          sender: 'You',
+          message: '[Voice Message]',
+          timestamp: new Date(),
+          type: 'voice',
+          channel,
+          signalStrength: 100
+        };
+        
+        setMessages(prev => [...prev, voiceMessage].slice(-50));
+      }
+    } catch (error) {
+      console.error('Error transmitting audio:', error);
     }
-  }, [isPoweredOn, deviceStatus.signalQuality]);
-
-  const testRadioSounds = useCallback(() => {
-    console.log('Testing radio sounds...');
-  }, []);
+  }, [isPoweredOn, deviceStatus.signalQuality, channel]);
 
   return {
-    isConnected: deviceStatus.signalQuality !== 'none',
+    isConnected: deviceStatus.signalQuality !== 'none' && audioInitialized,
     peerCount: unifiedMeshService.getPeersOnCurrentChannel(),
     isTransmitting,
     isReceiving,
@@ -146,9 +164,8 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
     isWifiConnected: deviceStatus.isWifiConnected,
     isBluetoothEnabled: deviceStatus.isBluetoothEnabled,
     messages,
+    audioMetrics,
     sendMessage,
-    startTransmission,
-    stopTransmission,
-    testRadioSounds
+    handleAudioData
   };
 };

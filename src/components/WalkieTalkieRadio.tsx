@@ -4,7 +4,6 @@ import {
   Power, 
   Settings, 
   Antenna,
-  Signal,
   WifiOff,
   Wifi
 } from 'lucide-react';
@@ -12,7 +11,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RadioControls } from './radio/RadioControls';
 import { ChannelSelector } from './radio/ChannelSelector';
 import { StatusDisplay } from './radio/StatusDisplay';
-import { PTTButton } from './radio/PTTButton';
+import { EnhancedPTTButton } from './radio/EnhancedPTTButton';
+import { AudioMetrics } from './radio/AudioMetrics';
 import { SettingsPanel } from './radio/SettingsPanel';
 import { Settings as AdvancedSettings } from '../pages/Settings';
 import { useUnifiedRadioMesh } from '../hooks/useUnifiedRadioMesh';
@@ -34,7 +34,6 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
   const { 
     isConnected, 
     peerCount, 
-    isTransmitting,
     isReceiving,
     batteryLevel,
     connectionQuality,
@@ -42,9 +41,9 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
     isWifiConnected,
     isBluetoothEnabled,
     messages,
+    audioMetrics,
     sendMessage,
-    startTransmission,
-    stopTransmission 
+    handleAudioData
   } = useUnifiedRadioMesh(isPoweredOn, channel);
 
   const handlePowerToggle = () => {
@@ -115,7 +114,6 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                     <span>MESH RADIO</span>
                     <div className="flex items-center space-x-1">
                       {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                      <Signal className="w-3 h-3" />
                     </div>
                   </div>
                   <div className="text-green-300 text-xs font-mono">
@@ -123,6 +121,9 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                   </div>
                   <div className="text-green-300 text-xs font-mono">
                     VOL: {volume} | SQL: {squelch}
+                  </div>
+                  <div className="text-green-300 text-xs font-mono">
+                    QUALITY: {audioMetrics.quality.toUpperCase()} | S/N: {audioMetrics.signalToNoise}dB
                   </div>
                   <div className="flex items-center space-x-2 text-xs font-mono">
                     <span className={isOnline ? 'text-blue-400' : 'text-gray-400'}>
@@ -135,15 +136,6 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                       BT: {isBluetoothEnabled ? 'ON' : 'OFF'}
                     </span>
                   </div>
-                  {isTransmitting && (
-                    <motion.div
-                      animate={{ opacity: [1, 0.5, 1] }}
-                      transition={{ repeat: Infinity, duration: 1 }}
-                      className="text-red-400 text-xs font-mono font-bold"
-                    >
-                      *** TRANSMITTING ***
-                    </motion.div>
-                  )}
                   {isReceiving && (
                     <motion.div
                       animate={{ opacity: [1, 0.5, 1] }}
@@ -161,6 +153,17 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
               )}
             </div>
           </div>
+
+          {/* Audio Metrics */}
+          {isPoweredOn && (
+            <div className="px-4 pb-4">
+              <AudioMetrics 
+                metrics={audioMetrics}
+                isRecording={false}
+                isPoweredOn={isPoweredOn}
+              />
+            </div>
+          )}
 
           {/* Control Panel */}
           <div className="p-4 space-y-4">
@@ -221,13 +224,12 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
             />
           </div>
 
-          {/* PTT Button */}
+          {/* Enhanced PTT Button */}
           <div className="p-4 pt-0">
-            <PTTButton
-              isTransmitting={isTransmitting}
-              onStartTransmission={startTransmission}
-              onStopTransmission={stopTransmission}
+            <EnhancedPTTButton
+              onAudioData={handleAudioData}
               isPoweredOn={isPoweredOn}
+              isConnected={isConnected}
             />
           </div>
 

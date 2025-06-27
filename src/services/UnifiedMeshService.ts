@@ -1,5 +1,6 @@
 
 import { MeshNetworking, type MeshPeer, type MeshMessage, type MeshNetworkStatus } from '../plugins/mesh-networking-plugin';
+import { audioManager } from './AudioManager';
 
 export interface ChannelTransmission {
   id: string;
@@ -37,6 +38,7 @@ class UnifiedMeshService {
   };
   private statusListeners: Set<(status: DeviceStatus) => void> = new Set();
   private transmissionHistory: Map<string, ChannelTransmission> = new Map();
+  private discoveryChannel: BroadcastChannel | null = null;
 
   constructor() {
     this.initializeService();
@@ -80,28 +82,28 @@ class UnifiedMeshService {
   }
 
   private async initializeWeb() {
-    // Initialize WebRTC-based mesh networking for web
     this.initializeWebRTCDiscovery();
     this.simulatePeersForDemo();
     console.log('Web mesh service initialized');
   }
 
   private initializeWebRTCDiscovery() {
-    // Use BroadcastChannel for local peer discovery
-    const channel = new BroadcastChannel('mesh-radio-discovery');
+    this.discoveryChannel = new BroadcastChannel('mesh-radio-discovery');
     
-    channel.postMessage({
+    this.discoveryChannel.postMessage({
       type: 'peer-announcement',
       peerId: this.deviceId,
       channel: this.activeChannel,
       timestamp: Date.now()
     });
 
-    channel.onmessage = (event) => {
+    this.discoveryChannel.onmessage = (event) => {
       if (event.data.type === 'peer-announcement' && event.data.peerId !== this.deviceId) {
         this.handlePeerDiscovered(event.data.peerId);
       } else if (event.data.type === 'message' && event.data.channel === this.activeChannel) {
         this.handleWebMessage(event.data);
+      } else if (event.data.type === 'voice' && event.data.channel === this.activeChannel) {
+        this.handleWebVoiceMessage(event.data);
       }
     };
   }
@@ -196,6 +198,27 @@ class UnifiedMeshService {
     this.processTransmission(transmission);
   }
 
+  private async handleWebVoiceMessage(data: any) {
+    try {
+      // Convert base64 back to ArrayBuffer
+      const audioData = Uint8Array.from(atob(data.audioData), c => c.charCodeAt(0));
+      
+      const transmission: ChannelTransmission = {
+        id: data.id,
+        senderId: data.senderId,
+        channel: data.channel,
+        content: audioData.buffer,
+        type: 'voice',
+        timestamp: data.timestamp,
+        signalStrength: 75
+      };
+
+      this.processTransmission(transmission);
+    } catch (error) {
+      console.error('Failed to process voice message:', error);
+    }
+  }
+
   private processTransmission(transmission: ChannelTransmission) {
     if (transmission.channel !== this.activeChannel) return;
 
@@ -242,6 +265,16 @@ class UnifiedMeshService {
     if (channel >= 1 && channel <= 99) {
       this.activeChannel = channel;
       this.updateSignalQuality();
+      
+      // Announce channel change
+      if (this.discoveryChannel) {
+        this.discoveryChannel.postMessage({
+          type: 'channel-change',
+          peerId: this.deviceId,
+          channel: this.activeChannel,
+          timestamp: Date.now()
+        });
+      }
     }
   }
 
@@ -279,9 +312,9 @@ class UnifiedMeshService {
         const result = await MeshNetworking.sendMessage({ message });
         return result.success;
       } else {
-        // Web implementation using BroadcastChannel
-        const channel = new BroadcastChannel('mesh-radio-discovery');
-        channel.postMessage({ type: 'message', ...messageData });
+        if (this.discoveryChannel) {
+          this.discoveryChannel.postMessage({ type: 'message', ...messageData });
+        }
         return true;
       }
     } catch (error) {
@@ -291,9 +324,44 @@ class UnifiedMeshService {
   }
 
   public async transmitVoice(audioData: ArrayBuffer): Promise<boolean> {
-    console.log('Voice transmission simulated');
-    // For now, just simulate voice transmission
-    return true;
+    try {
+      if (this.isNativeEnvironment) {
+        const message: MeshMessage = {
+          id: `voice-${Date.now()}`,
+          sender: this.deviceId,
+          destination: 'broadcast',
+          payload: new Uint8Array(audioData),
+          timestamp: Date.now(),
+          hops: 0,
+          type: 'voice',
+          maxHops: 5
+        };
+        
+        const result = await MeshNetworking.sendMessage({ message });
+        return result.success;
+      } else {
+        // Convert ArrayBuffer to base64 for web transmission
+        const uint8Array = new Uint8Array(audioData);
+        const base64Audio = btoa(String.fromCharCode(...uint8Array));
+        
+        const voiceData = {
+          id: `voice-${Date.now()}`,
+          senderId: this.deviceId,
+          channel: this.activeChannel,
+          type: 'voice',
+          audioData: base64Audio,
+          timestamp: Date.now()
+        };
+
+        if (this.discoveryChannel) {
+          this.discoveryChannel.postMessage({ type: 'voice', ...voiceData });
+        }
+        return true;
+      }
+    } catch (error) {
+      console.error('Voice transmission failed:', error);
+      return false;
+    }
   }
 
   public onChannelTransmission(channel: number, listener: (transmission: ChannelTransmission) => void) {
@@ -336,10 +404,18 @@ class UnifiedMeshService {
       if (this.isNativeEnvironment) {
         await MeshNetworking.stopNetwork();
       }
+      
+      if (this.discoveryChannel) {
+        this.discoveryChannel.close();
+        this.discoveryChannel = null;
+      }
+      
       this.channelListeners.clear();
       this.statusListeners.clear();
       this.peersByChannel.clear();
       this.webRTCPeers.clear();
+      
+      await audioManager.destroy();
     } catch (error) {
       console.error('Shutdown failed:', error);
     }

@@ -1,239 +1,152 @@
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { audioBridge } from '../utils/nativeBridge';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { audioManager, type AudioMetrics } from '../services/AudioManager';
 
 export const useAudioManager = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [metrics, setMetrics] = useState<AudioMetrics>({
+    inputLevel: 0,
+    outputLevel: 0,
+    noiseLevel: 0,
+    signalToNoise: 0,
+    quality: 'poor',
+    bitrate: 0,
+    latency: 0
+  });
+  const [error, setError] = useState<string | null>(null);
+  
+  const audioChunkHandlerRef = useRef<((chunk: Blob) => void) | null>(null);
 
-  // Initialize audio context
   useEffect(() => {
-    const initAudio = async () => {
-      try {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      } catch (error) {
-        console.error('Failed to initialize audio context:', error);
+    const handleInitialized = () => {
+      setIsInitialized(true);
+      setError(null);
+    };
+
+    const handleRecordingStarted = () => {
+      setIsRecording(true);
+      setError(null);
+    };
+
+    const handleRecordingStopped = () => {
+      setIsRecording(false);
+    };
+
+    const handlePlaybackStarted = () => {
+      setIsPlaying(true);
+    };
+
+    const handlePlaybackEnded = () => {
+      setIsPlaying(false);
+    };
+
+    const handleMetricsUpdated = (newMetrics: AudioMetrics) => {
+      setMetrics(newMetrics);
+    };
+
+    const handleError = (error: any) => {
+      setError(error.message || 'Audio error occurred');
+      setIsRecording(false);
+      setIsPlaying(false);
+    };
+
+    const handleAudioChunk = (chunk: Blob) => {
+      if (audioChunkHandlerRef.current) {
+        audioChunkHandlerRef.current(chunk);
       }
     };
 
-    initAudio();
+    // Add event listeners
+    audioManager.on('initialized', handleInitialized);
+    audioManager.on('recording-started', handleRecordingStarted);
+    audioManager.on('recording-stopped', handleRecordingStopped);
+    audioManager.on('playback-started', handlePlaybackStarted);
+    audioManager.on('playback-ended', handlePlaybackEnded);
+    audioManager.on('metrics-updated', handleMetricsUpdated);
+    audioManager.on('error', handleError);
+    audioManager.on('audio-chunk', handleAudioChunk);
 
+    // Cleanup
     return () => {
-      if (audioContextRef.current?.state !== 'closed') {
-        audioContextRef.current?.close();
-      }
+      audioManager.off('initialized', handleInitialized);
+      audioManager.off('recording-started', handleRecordingStarted);
+      audioManager.off('recording-stopped', handleRecordingStopped);
+      audioManager.off('playback-started', handlePlaybackStarted);
+      audioManager.off('playback-ended', handlePlaybackEnded);
+      audioManager.off('metrics-updated', handleMetricsUpdated);
+      audioManager.off('error', handleError);
+      audioManager.off('audio-chunk', handleAudioChunk);
     };
-  }, []);
-
-  // Play radio sounds
-  const playRadioSound = useCallback(async (type: 'ptt_on' | 'ptt_off' | 'static' | 'beep') => {
-    if (!audioContextRef.current) return;
-
-    const audioContext = audioContextRef.current;
-    
-    try {
-      // Generate radio-like sounds
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      switch (type) {
-        case 'ptt_on':
-          // Quick ascending beep
-          oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-          oscillator.frequency.exponentialRampToValueAtTime(1200, audioContext.currentTime + 0.1);
-          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-          oscillator.start(audioContext.currentTime);
-          oscillator.stop(audioContext.currentTime + 0.1);
-          break;
-          
-        case 'ptt_off':
-          // Quick descending beep
-          oscillator.frequency.setValueAtTime(1200, audioContext.currentTime);
-          oscillator.frequency.exponentialRampToValueAtTime(800, audioContext.currentTime + 0.1);
-          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-          oscillator.start(audioContext.currentTime);
-          oscillator.stop(audioContext.currentTime + 0.1);
-          break;
-          
-        case 'static':
-          // White noise for static
-          const bufferSize = audioContext.sampleRate * 0.5; // 0.5 seconds
-          const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-          const data = buffer.getChannelData(0);
-          
-          for (let i = 0; i < bufferSize; i++) {
-            data[i] = (Math.random() * 2 - 1) * 0.05; // Low volume static
-          }
-          
-          const source = audioContext.createBufferSource();
-          source.buffer = buffer;
-          source.connect(gainNode);
-          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-          source.start(audioContext.currentTime);
-          break;
-          
-        case 'beep':
-          // Single tone beep
-          oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
-          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-          oscillator.start(audioContext.currentTime);
-          oscillator.stop(audioContext.currentTime + 0.2);
-          break;
-      }
-    } catch (error) {
-      console.error('Failed to play radio sound:', error);
-    }
   }, []);
 
   const startRecording = useCallback(async () => {
-    try {
-      // Play PTT activation sound
-      await playRadioSound('ptt_on');
-      
-      // Get user media
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 48000
-        } 
-      });
-      
-      mediaStreamRef.current = stream;
-      
-      // Start native recording if available
-      await audioBridge.startRecording(true);
-      
-      // Start web recording as fallback/backup
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-      
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorder.onstop = async () => {
-        if (audioChunksRef.current.length > 0) {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          
-          // Transmit audio through native bridge
-          await audioBridge.transmitAudio(arrayBuffer);
-        }
-      };
-      
-      mediaRecorder.start(100); // Collect data every 100ms for real-time transmission
-      setIsRecording(true);
-      
-      console.log('Audio recording started');
-    } catch (error) {
-      console.error('Failed to start recording:', error);
-      // Play error beep
-      await playRadioSound('static');
+    if (!isInitialized) {
+      setError('Audio manager not initialized');
+      return false;
     }
-  }, [playRadioSound]);
+
+    try {
+      const success = await audioManager.startRecording();
+      if (!success) {
+        setError('Failed to start recording');
+      }
+      return success;
+    } catch (error) {
+      setError('Failed to start recording');
+      return false;
+    }
+  }, [isInitialized]);
 
   const stopRecording = useCallback(async () => {
     try {
-      // Play PTT deactivation sound
-      await playRadioSound('ptt_off');
-      
-      // Stop native recording
-      await audioBridge.stopRecording();
-      
-      // Stop web recording
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      
-      // Stop media stream
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
-      }
-      
-      setIsRecording(false);
-      console.log('Audio recording stopped');
+      const audioBlob = await audioManager.stopRecording();
+      return audioBlob;
     } catch (error) {
-      console.error('Failed to stop recording:', error);
+      setError('Failed to stop recording');
+      return null;
     }
-  }, [playRadioSound]);
+  }, []);
 
-  // Play received audio
-  const playReceivedAudio = useCallback(async (audioData: ArrayBuffer | Blob) => {
-    if (!audioContextRef.current) return;
+  const playAudio = useCallback(async (audioData: ArrayBuffer | Blob) => {
+    if (!isInitialized) {
+      setError('Audio manager not initialized');
+      return false;
+    }
 
     try {
-      setIsPlaying(true);
-      
-      // Play incoming transmission sound
-      await playRadioSound('beep');
-      
-      let arrayBuffer: ArrayBuffer;
-      
-      if (audioData instanceof ArrayBuffer) {
-        arrayBuffer = audioData;
-      } else {
-        arrayBuffer = await audioData.arrayBuffer();
-      }
-      
-      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-      const source = audioContextRef.current.createBufferSource();
-      const gainNode = audioContextRef.current.createGain();
-      
-      source.buffer = audioBuffer;
-      source.connect(gainNode);
-      gainNode.connect(audioContextRef.current.destination);
-      
-      // Set volume
-      gainNode.gain.setValueAtTime(0.8, audioContextRef.current.currentTime);
-      
-      source.onended = () => {
-        setIsPlaying(false);
-        // Play end transmission sound
-        playRadioSound('static');
-      };
-      
-      source.start();
-      
+      await audioManager.playAudio(audioData);
+      return true;
     } catch (error) {
-      console.error('Failed to play received audio:', error);
-      setIsPlaying(false);
-      await playRadioSound('static');
+      setError('Failed to play audio');
+      return false;
     }
-  }, [playRadioSound]);
+  }, [isInitialized]);
 
-  // Test radio sounds
-  const testRadioSounds = useCallback(async () => {
-    await playRadioSound('ptt_on');
-    setTimeout(() => playRadioSound('ptt_off'), 200);
-    setTimeout(() => playRadioSound('beep'), 400);
-    setTimeout(() => playRadioSound('static'), 600);
-  }, [playRadioSound]);
+  const setVolume = useCallback((volume: number) => {
+    audioManager.setVolume(volume / 10); // Convert from 0-10 scale to 0-1
+  }, []);
+
+  const setAudioChunkHandler = useCallback((handler: (chunk: Blob) => void) => {
+    audioChunkHandlerRef.current = handler;
+  }, []);
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
   return {
     isRecording,
     isPlaying,
+    isInitialized,
+    metrics,
+    error,
     startRecording,
     stopRecording,
-    playReceivedAudio,
-    playRadioSound,
-    testRadioSounds
+    playAudio,
+    setVolume,
+    setAudioChunkHandler,
+    clearError
   };
 };
