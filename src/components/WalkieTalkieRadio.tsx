@@ -130,7 +130,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                   CH {channel.toString().padStart(2, '0')}
                 </div>
                 {isPoweredOn && pairedDevices.filter(d => d.verified).length > 0 && (
-                  <Shield className="w-4 h-4 text-blue-400" title="Encrypted" />
+                  <Shield className="w-4 h-4 text-blue-400" />
                 )}
               </div>
               <StatusDisplay 

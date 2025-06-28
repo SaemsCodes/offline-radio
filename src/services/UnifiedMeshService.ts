@@ -1,6 +1,9 @@
 import { MeshNetworking, type MeshPeer, type MeshMessage, type MeshNetworkStatus } from '../plugins/mesh-networking-plugin';
 import { audioManager } from './AudioManager';
 import { EncryptionService, createEncryptionService, type EncryptedMessage } from './EncryptionService';
+import { networkDiscoveryService, type DiscoveredPeer } from './NetworkDiscoveryService';
+import { createAdaptiveRoutingService, type AdaptiveRoutingService, type QualityOfService } from './AdaptiveRoutingService';
+import { connectionPoolService, type PooledConnection } from './ConnectionPoolService';
 
 export interface ChannelTransmission {
   id: string;
@@ -11,6 +14,11 @@ export interface ChannelTransmission {
   timestamp: number;
   signalStrength: number;
   encrypted?: boolean;
+  routeInfo?: {
+    hops: number;
+    latency: number;
+    transport: string;
+  };
 }
 
 export interface DeviceStatus {
@@ -20,6 +28,13 @@ export interface DeviceStatus {
   isBluetoothEnabled: boolean;
   volume: number;
   signalQuality: 'excellent' | 'good' | 'poor' | 'none';
+  networkMetrics: {
+    totalPeers: number;
+    activePeers: number;
+    averageLatency: number;
+    networkReliability: number;
+    availableTransports: string[];
+  };
 }
 
 class UnifiedMeshService {
@@ -35,12 +50,20 @@ class UnifiedMeshService {
     isWifiConnected: false,
     isBluetoothEnabled: false,
     volume: 7,
-    signalQuality: 'none'
+    signalQuality: 'none',
+    networkMetrics: {
+      totalPeers: 0,
+      activePeers: 0,
+      averageLatency: 0,
+      networkReliability: 0,
+      availableTransports: []
+    }
   };
   private statusListeners: Set<(status: DeviceStatus) => void> = new Set();
   private transmissionHistory: Map<string, ChannelTransmission> = new Map();
   private discoveryChannel: BroadcastChannel | null = null;
   private encryptionService: EncryptionService | null = null;
+  private routingService: AdaptiveRoutingService | null = null;
 
   constructor() {
     this.initializeService();
@@ -54,6 +77,12 @@ class UnifiedMeshService {
     this.encryptionService = createEncryptionService(this.deviceId);
     await this.encryptionService.initialize();
 
+    // Initialize adaptive routing
+    this.routingService = createAdaptiveRoutingService(this.deviceId);
+
+    // Initialize network discovery
+    await this.initializeNetworkDiscovery();
+
     if (this.isNativeEnvironment) {
       await this.initializeNative();
     } else {
@@ -64,12 +93,30 @@ class UnifiedMeshService {
     this.startPeriodicUpdates();
   }
 
+  private async initializeNetworkDiscovery() {
+    // Set up network discovery event listeners
+    networkDiscoveryService.on('peer-discovered', (peer: DiscoveredPeer) => {
+      this.handlePeerDiscovered(peer);
+    });
+
+    networkDiscoveryService.on('peer-lost', (peerId: string) => {
+      this.handlePeerLost(peerId);
+    });
+
+    networkDiscoveryService.on('transports-optimized', (transports) => {
+      this.updateNetworkMetrics();
+    });
+
+    // Start network discovery
+    await networkDiscoveryService.startDiscovery();
+  }
+
   private async initializeNative() {
     try {
       await MeshNetworking.startNetwork();
       
       MeshNetworking.addListener('peerDiscovered', (peer: MeshPeer) => {
-        this.handlePeerDiscovered(peer.id);
+        this.handlePeerDiscovered(peer);
       });
 
       MeshNetworking.addListener('peerLost', (peerId: string) => {
@@ -105,7 +152,7 @@ class UnifiedMeshService {
 
     this.discoveryChannel.onmessage = (event) => {
       if (event.data.type === 'peer-announcement' && event.data.peerId !== this.deviceId) {
-        this.handlePeerDiscovered(event.data.peerId);
+        this.handlePeerDiscovered(event.data);
       } else if (event.data.type === 'message' && event.data.channel === this.activeChannel) {
         this.handleWebMessage(event.data);
       } else if (event.data.type === 'voice' && event.data.channel === this.activeChannel) {
@@ -134,30 +181,30 @@ class UnifiedMeshService {
     return `DEVICE-${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  private setupNetworkListeners() {
-    window.addEventListener('online', () => {
-      this.deviceStatus.isOnline = true;
-      this.updateSignalQuality();
-      this.notifyStatusListeners();
-    });
+  private handlePeerDiscovered(peer: DiscoveredPeer) {
+    this.addPeerToChannel(this.activeChannel, peer.id);
+    
+    // Add route to routing table
+    if (this.routingService) {
+      this.routingService.addRoute(peer.id, peer.id, {
+        latency: 100 - peer.signalStrength, // Convert signal strength to latency estimate
+        reliability: peer.signalStrength,
+        transport: peer.transport,
+        bandwidth: this.estimateBandwidth(peer.transport)
+      });
+    }
 
-    window.addEventListener('offline', () => {
-      this.deviceStatus.isOnline = false;
-      this.updateSignalQuality();
-      this.notifyStatusListeners();
-    });
+    console.log(`Peer discovered: ${peer.name} (${peer.id}) via ${peer.transport}`);
   }
 
-  private startPeriodicUpdates() {
-    setInterval(() => {
-      this.updateSignalQuality();
-      this.notifyStatusListeners();
-    }, 5000);
-  }
-
-  private handlePeerDiscovered(peerId: string) {
-    this.addPeerToChannel(this.activeChannel, peerId);
-    console.log(`Peer discovered: ${peerId} on channel ${this.activeChannel}`);
+  private estimateBandwidth(transport: string): number {
+    switch (transport) {
+      case 'webrtc': return 2000000; // 2Mbps
+      case 'websocket': return 1000000; // 1Mbps
+      case 'bluetooth': return 100000; // 100Kbps
+      case 'mdns': return 10000000; // 10Mbps (local network)
+      default: return 500000; // 500Kbps
+    }
   }
 
   private handlePeerLost(peerId: string) {
@@ -167,7 +214,7 @@ class UnifiedMeshService {
         this.peersByChannel.delete(channel);
       }
     });
-    this.updateSignalQuality();
+    this.updateNetworkMetrics();
   }
 
   private addPeerToChannel(channel: number, peerId: string) {
@@ -175,7 +222,21 @@ class UnifiedMeshService {
       this.peersByChannel.set(channel, new Set());
     }
     this.peersByChannel.get(channel)!.add(peerId);
-    this.updateSignalQuality();
+    this.updateNetworkMetrics();
+  }
+
+  private setupNetworkListeners() {
+    window.addEventListener('online', () => {
+      this.deviceStatus.isOnline = true;
+      this.updateNetworkMetrics();
+      this.notifyStatusListeners();
+    });
+
+    window.addEventListener('offline', () => {
+      this.deviceStatus.isOnline = false;
+      this.updateNetworkMetrics();
+      this.notifyStatusListeners();
+    });
   }
 
   private handleIncomingMessage(message: MeshMessage) {
@@ -288,18 +349,40 @@ class UnifiedMeshService {
     return null;
   }
 
-  private updateSignalQuality() {
-    const channelPeers = this.peersByChannel.get(this.activeChannel)?.size || 0;
-    
-    if (channelPeers >= 3) {
+  private updateNetworkMetrics() {
+    const discoveredPeers = networkDiscoveryService.getDiscoveredPeers();
+    const availableTransports = networkDiscoveryService.getAvailableTransports();
+    const routingMetrics = this.routingService?.getRouteMetrics();
+    const connectionMetrics = connectionPoolService.getMetrics();
+
+    this.deviceStatus.networkMetrics = {
+      totalPeers: discoveredPeers.length,
+      activePeers: discoveredPeers.filter(p => p.isReachable).length,
+      averageLatency: routingMetrics?.averageLatency || connectionMetrics.averageLatency,
+      networkReliability: routingMetrics?.networkReliability || 95,
+      availableTransports: availableTransports.filter(t => t.isAvailable).map(t => t.type)
+    };
+
+    // Update signal quality based on network metrics
+    const activePeers = this.deviceStatus.networkMetrics.activePeers;
+    const reliability = this.deviceStatus.networkMetrics.networkReliability;
+
+    if (activePeers >= 3 && reliability >= 90) {
       this.deviceStatus.signalQuality = 'excellent';
-    } else if (channelPeers >= 1) {
+    } else if (activePeers >= 2 && reliability >= 75) {
       this.deviceStatus.signalQuality = 'good';
-    } else if (this.deviceStatus.isOnline) {
+    } else if (activePeers >= 1 && reliability >= 50) {
       this.deviceStatus.signalQuality = 'poor';
     } else {
       this.deviceStatus.signalQuality = 'none';
     }
+  }
+
+  private startPeriodicUpdates() {
+    setInterval(() => {
+      this.updateNetworkMetrics();
+      this.notifyStatusListeners();
+    }, 5000);
   }
 
   private notifyStatusListeners() {
@@ -310,7 +393,7 @@ class UnifiedMeshService {
   public setChannel(channel: number) {
     if (channel >= 1 && channel <= 99) {
       this.activeChannel = channel;
-      this.updateSignalQuality();
+      this.updateNetworkMetrics();
       
       if (this.discoveryChannel) {
         this.discoveryChannel.postMessage({
@@ -331,11 +414,20 @@ class UnifiedMeshService {
     return this.peersByChannel.get(this.activeChannel)?.size || 0;
   }
 
-  public async transmitText(text: string, encrypt: boolean = false): Promise<boolean> {
+  // Enhanced transmission methods with routing and connection pooling
+  public async transmitText(text: string, encrypt: boolean = false, priority: 'low' | 'normal' | 'high' | 'emergency' = 'normal'): Promise<boolean> {
     try {
       if (encrypt && this.encryptionService) {
-        return await this.transmitEncryptedText(text);
+        return await this.transmitEncryptedText(text, priority);
       }
+
+      const qos: QualityOfService = {
+        priority,
+        maxLatency: priority === 'emergency' ? 100 : priority === 'high' ? 200 : 1000,
+        minBandwidth: 10000, // 10KB/s for text
+        requiresEncryption: encrypt,
+        allowRetransmission: priority !== 'emergency'
+      };
 
       const messageData = {
         id: `text-${Date.now()}`,
@@ -343,7 +435,8 @@ class UnifiedMeshService {
         channel: this.activeChannel,
         content: text,
         type: 'text',
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        priority
       };
 
       if (this.isNativeEnvironment) {
@@ -355,16 +448,20 @@ class UnifiedMeshService {
           timestamp: Date.now(),
           hops: 0,
           type: 'text',
-          maxHops: 5
+          maxHops: priority === 'emergency' ? 10 : 5
         };
         
         const result = await MeshNetworking.sendMessage({ message });
         return result.success;
       } else {
+        // Use connection pooling and adaptive routing for web
+        const success = await this.broadcastToOptimalPeers(messageData, qos);
+        
         if (this.discoveryChannel) {
           this.discoveryChannel.postMessage({ type: 'message', ...messageData });
         }
-        return true;
+        
+        return success;
       }
     } catch (error) {
       console.error('Text transmission failed:', error);
@@ -372,7 +469,37 @@ class UnifiedMeshService {
     }
   }
 
-  private async transmitEncryptedText(text: string): Promise<boolean> {
+  private async broadcastToOptimalPeers(messageData: any, qos: QualityOfService): Promise<boolean> {
+    const discoveredPeers = networkDiscoveryService.getDiscoveredPeers();
+    const successfulTransmissions: string[] = [];
+
+    for (const peer of discoveredPeers) {
+      try {
+        // Get best route to peer
+        const route = this.routingService?.getBestRoute(peer.id, qos);
+        if (!route) continue;
+
+        // Get or create connection
+        const connection = await connectionPoolService.acquireConnection(
+          peer.id, 
+          route.transport as any
+        );
+        
+        if (connection) {
+          const success = await connectionPoolService.sendMessage(peer.id, messageData);
+          if (success) {
+            successfulTransmissions.push(peer.id);
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to transmit to peer ${peer.id}:`, error);
+      }
+    }
+
+    return successfulTransmissions.length > 0;
+  }
+
+  private async transmitEncryptedText(text: string, priority: 'low' | 'normal' | 'high' | 'emergency' = 'normal'): Promise<boolean> {
     if (!this.encryptionService) return false;
 
     const pairedDevices = this.encryptionService.getPairedDevices().filter(d => d.verified);
@@ -395,7 +522,8 @@ class UnifiedMeshService {
         timestamp: Date.now(),
         encryptedData: Array.from(new Uint8Array(encryptedMessage.data)),
         iv: Array.from(new Uint8Array(encryptedMessage.iv)),
-        senderPublicKey: Array.from(new Uint8Array(encryptedMessage.senderPublicKey))
+        senderPublicKey: Array.from(new Uint8Array(encryptedMessage.senderPublicKey)),
+        priority
       };
 
       if (this.discoveryChannel) {
@@ -408,11 +536,19 @@ class UnifiedMeshService {
     }
   }
 
-  public async transmitVoice(audioData: ArrayBuffer, encrypt: boolean = false): Promise<boolean> {
+  public async transmitVoice(audioData: ArrayBuffer, encrypt: boolean = false, priority: 'normal' | 'high' | 'emergency' = 'normal'): Promise<boolean> {
     try {
       if (encrypt && this.encryptionService) {
-        return await this.transmitEncryptedVoice(audioData);
+        return await this.transmitEncryptedVoice(audioData, priority);
       }
+
+      const qos: QualityOfService = {
+        priority,
+        maxLatency: priority === 'emergency' ? 150 : 300,
+        minBandwidth: 64000, // 64KB/s for voice
+        requiresEncryption: encrypt,
+        allowRetransmission: false // Voice is real-time
+      };
 
       if (this.isNativeEnvironment) {
         const message: MeshMessage = {
@@ -423,7 +559,7 @@ class UnifiedMeshService {
           timestamp: Date.now(),
           hops: 0,
           type: 'voice',
-          maxHops: 5
+          maxHops: priority === 'emergency' ? 10 : 5
         };
         
         const result = await MeshNetworking.sendMessage({ message });
@@ -438,13 +574,18 @@ class UnifiedMeshService {
           channel: this.activeChannel,
           type: 'voice',
           audioData: base64Audio,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          priority
         };
+
+        // Use optimized transmission for voice
+        const success = await this.broadcastToOptimalPeers(voiceData, qos);
 
         if (this.discoveryChannel) {
           this.discoveryChannel.postMessage({ type: 'voice', ...voiceData });
         }
-        return true;
+        
+        return success;
       }
     } catch (error) {
       console.error('Voice transmission failed:', error);
@@ -452,7 +593,7 @@ class UnifiedMeshService {
     }
   }
 
-  private async transmitEncryptedVoice(audioData: ArrayBuffer): Promise<boolean> {
+  private async transmitEncryptedVoice(audioData: ArrayBuffer, priority: 'normal' | 'high' | 'emergency' = 'normal'): Promise<boolean> {
     if (!this.encryptionService) return false;
 
     const pairedDevices = this.encryptionService.getPairedDevices().filter(d => d.verified);
@@ -473,7 +614,8 @@ class UnifiedMeshService {
         timestamp: Date.now(),
         encryptedData: Array.from(new Uint8Array(encryptedMessage.data)),
         iv: Array.from(new Uint8Array(encryptedMessage.iv)),
-        senderPublicKey: Array.from(new Uint8Array(encryptedMessage.senderPublicKey))
+        senderPublicKey: Array.from(new Uint8Array(encryptedMessage.senderPublicKey)),
+        priority
       };
 
       if (this.discoveryChannel) {
@@ -522,6 +664,35 @@ class UnifiedMeshService {
     return this.encryptionService ? this.encryptionService.getPairedDevices() : [];
   }
 
+  // Enhanced network information methods
+  public getNetworkStatus() {
+    return {
+      deviceMetrics: this.deviceStatus,
+      discoveredPeers: networkDiscoveryService.getDiscoveredPeers(),
+      availableTransports: networkDiscoveryService.getAvailableTransports(),
+      routingMetrics: this.routingService?.getRouteMetrics(),
+      connectionMetrics: connectionPoolService.getMetrics()
+    };
+  }
+
+  public async optimizeNetwork(): Promise<void> {
+    // Trigger network optimization
+    this.updateNetworkMetrics();
+    
+    // Force route recalculation
+    if (this.routingService) {
+      const discoveredPeers = networkDiscoveryService.getDiscoveredPeers();
+      for (const peer of discoveredPeers) {
+        this.routingService.addRoute(peer.id, peer.id, {
+          latency: 100 - peer.signalStrength,
+          reliability: peer.signalStrength,
+          transport: peer.transport,
+          bandwidth: this.estimateBandwidth(peer.transport)
+        });
+      }
+    }
+  }
+
   public onChannelTransmission(channel: number, listener: (transmission: ChannelTransmission) => void) {
     if (!this.channelListeners.has(channel)) {
       this.channelListeners.set(channel, new Set());
@@ -562,6 +733,10 @@ class UnifiedMeshService {
       if (this.isNativeEnvironment) {
         await MeshNetworking.stopNetwork();
       }
+      
+      await networkDiscoveryService.stopDiscovery();
+      this.routingService?.shutdown();
+      connectionPoolService.shutdown();
       
       if (this.discoveryChannel) {
         this.discoveryChannel.close();
