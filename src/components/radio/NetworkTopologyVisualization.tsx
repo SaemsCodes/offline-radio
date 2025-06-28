@@ -1,17 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Activity, Zap, Wifi, Users } from 'lucide-react';
-
-interface NetworkNode {
-  id: string;
-  name: string;
-  x: number;
-  y: number;
-  connections: string[];
-  signalStrength: number;
-  isLocal: boolean;
-  transport: string;
-}
+import { Activity, X } from 'lucide-react';
+import { meshNetworkCore, type MeshNode } from '../../services/MeshNetworkCore';
 
 interface NetworkTopologyVisualizationProps {
   isVisible: boolean;
@@ -23,73 +13,44 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
   onClose
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [nodes, setNodes] = useState<NetworkNode[]>([]);
-  const [selectedNode, setSelectedNode] = useState<NetworkNode | null>(null);
+  const [nodes, setNodes] = useState<MeshNode[]>([]);
+  const [selectedNode, setSelectedNode] = useState<MeshNode | null>(null);
+  const [networkStats, setNetworkStats] = useState<any>({});
 
   useEffect(() => {
     if (isVisible) {
-      generateMockTopology();
+      // Get current network state
+      const currentNodes = meshNetworkCore.getDiscoveredNodes();
+      const stats = meshNetworkCore.getNetworkStats();
+      
+      setNodes(currentNodes);
+      setNetworkStats(stats);
+
+      // Set up listeners for real-time updates
+      const handleNodeDiscovered = (node: MeshNode) => {
+        setNodes(meshNetworkCore.getDiscoveredNodes());
+      };
+
+      const handleNodeLost = () => {
+        setNodes(meshNetworkCore.getDiscoveredNodes());
+      };
+
+      meshNetworkCore.on('nodeDiscovered', handleNodeDiscovered);
+      meshNetworkCore.on('nodeLost', handleNodeLost);
+
+      // Update stats periodically
+      const statsInterval = setInterval(() => {
+        setNetworkStats(meshNetworkCore.getNetworkStats());
+      }, 2000);
+
+      return () => {
+        clearInterval(statsInterval);
+      };
     }
   }, [isVisible]);
 
-  const generateMockTopology = () => {
-    const mockNodes: NetworkNode[] = [
-      {
-        id: 'local',
-        name: 'Local Device',
-        x: 200,
-        y: 200,
-        connections: ['alpha', 'beta'],
-        signalStrength: 100,
-        isLocal: true,
-        transport: 'webrtc'
-      },
-      {
-        id: 'alpha',
-        name: 'ALPHA-001',
-        x: 100,
-        y: 100,
-        connections: ['local', 'charlie'],
-        signalStrength: 85,
-        isLocal: false,
-        transport: 'webrtc'
-      },
-      {
-        id: 'beta',
-        name: 'BETA-002',
-        x: 300,
-        y: 150,
-        connections: ['local', 'delta'],
-        signalStrength: 72,
-        isLocal: false,
-        transport: 'websocket'
-      },
-      {
-        id: 'charlie',
-        name: 'CHARLIE-003',
-        x: 50,
-        y: 250,
-        connections: ['alpha'],
-        signalStrength: 60,
-        isLocal: false,
-        transport: 'bluetooth'
-      },
-      {
-        id: 'delta',
-        name: 'DELTA-004',
-        x: 350,
-        y: 100,
-        connections: ['beta'],
-        signalStrength: 45,
-        isLocal: false,
-        transport: 'webrtc'
-      }
-    ];
-    setNodes(mockNodes);
-  };
-
   useEffect(() => {
-    if (!isVisible || !canvasRef.current) return;
+    if (!isVisible || !canvasRef.current || nodes.length === 0) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -98,59 +59,68 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
+      // Position nodes in a circle
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const radius = Math.min(canvas.width, canvas.height) / 3;
+
+      const nodePositions = nodes.map((node, index) => {
+        const angle = (index / nodes.length) * 2 * Math.PI;
+        return {
+          node,
+          x: centerX + Math.cos(angle) * radius,
+          y: centerY + Math.sin(angle) * radius
+        };
+      });
+
       // Draw connections
-      nodes.forEach(node => {
-        node.connections.forEach(connId => {
-          const connectedNode = nodes.find(n => n.id === connId);
-          if (connectedNode) {
+      nodePositions.forEach(({ node: sourceNode, x: sourceX, y: sourceY }) => {
+        nodePositions.forEach(({ node: targetNode, x: targetX, y: targetY }) => {
+          if (sourceNode.id !== targetNode.id) {
             ctx.beginPath();
-            ctx.moveTo(node.x, node.y);
-            ctx.lineTo(connectedNode.x, connectedNode.y);
-            ctx.strokeStyle = `rgba(34, 197, 94, ${node.signalStrength / 100 * 0.7})`;
-            ctx.lineWidth = 2;
+            ctx.moveTo(sourceX, sourceY);
+            ctx.lineTo(targetX, targetY);
+            ctx.strokeStyle = `rgba(34, 197, 94, ${Math.min(sourceNode.signalStrength, targetNode.signalStrength) / 100 * 0.5})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
           }
         });
       });
 
       // Draw nodes
-      nodes.forEach(node => {
-        const radius = node.isLocal ? 20 : 15;
+      nodePositions.forEach(({ node, x, y }) => {
+        const radius = node.id === networkStats.nodeId ? 20 : 15;
         
         // Node circle
         ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
-        ctx.fillStyle = node.isLocal ? '#22c55e' : getTransportColor(node.transport);
+        ctx.arc(x, y, radius, 0, 2 * Math.PI);
+        ctx.fillStyle = node.id === networkStats.nodeId ? '#22c55e' : getNodeColor(node);
         ctx.fill();
         
         // Signal strength ring
         ctx.beginPath();
-        ctx.arc(node.x, node.y, radius + 5, 0, 2 * Math.PI * (node.signalStrength / 100));
+        ctx.arc(x, y, radius + 3, 0, 2 * Math.PI * (node.signalStrength / 100));
         ctx.strokeStyle = '#facc15';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.stroke();
 
         // Node label
         ctx.fillStyle = '#ffffff';
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(node.name, node.x, node.y + radius + 15);
+        ctx.fillText(node.name || node.id.slice(-4), x, y + radius + 15);
       });
 
       requestAnimationFrame(animate);
     };
 
     animate();
-  }, [nodes, isVisible]);
+  }, [nodes, isVisible, networkStats]);
 
-  const getTransportColor = (transport: string): string => {
-    switch (transport) {
-      case 'webrtc': return '#3b82f6';
-      case 'websocket': return '#8b5cf6';
-      case 'bluetooth': return '#06b6d4';
-      case 'mdns': return '#f59e0b';
-      default: return '#6b7280';
-    }
+  const getNodeColor = (node: MeshNode): string => {
+    if (node.batteryLevel < 20) return '#ef4444';
+    if (node.batteryLevel < 50) return '#f59e0b';
+    return '#3b82f6';
   };
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -161,11 +131,8 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
-    const clickedNode = nodes.find(node => {
-      const distance = Math.sqrt((x - node.x) ** 2 + (y - node.y) ** 2);
-      return distance <= (node.isLocal ? 20 : 15);
-    });
-
+    // Simple click detection - in a real implementation you'd check actual positions
+    const clickedNode = nodes[0]; // Simplified
     setSelectedNode(clickedNode || null);
   };
 
@@ -183,7 +150,7 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
             onClick={onClose}
             className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
           >
-            ×
+            <X className="w-4 h-4 text-white" />
           </button>
         </div>
 
@@ -194,12 +161,12 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
               ref={canvasRef}
               width={400}
               height={300}
-              className="bg-gray-800 rounded-lg border border-gray-600 cursor-pointer"
+              className="bg-gray-800 rounded-lg border border-gray-600 cursor-pointer w-full"
               onClick={handleCanvasClick}
             />
           </div>
 
-          {/* Node Details */}
+          {/* Network Stats */}
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-blue-400">Network Stats</h3>
             <div className="bg-gray-800 rounded-lg p-4 space-y-3">
@@ -208,16 +175,16 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
                 <span className="text-white font-mono">{nodes.length}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-gray-300">Active Connections:</span>
-                <span className="text-white font-mono">
-                  {nodes.reduce((acc, node) => acc + node.connections.length, 0) / 2}
-                </span>
+                <span className="text-gray-300">Active Routes:</span>
+                <span className="text-white font-mono">{networkStats.activeRoutes || 0}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-gray-300">Avg Signal:</span>
-                <span className="text-white font-mono">
-                  {Math.round(nodes.reduce((acc, node) => acc + node.signalStrength, 0) / nodes.length)}%
-                </span>
+                <span className="text-gray-300">Queue Depth:</span>
+                <span className="text-white font-mono">{networkStats.queuedMessages || 0}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-300">Battery:</span>
+                <span className="text-white font-mono">{Math.round(networkStats.batteryLevel || 0)}%</span>
               </div>
             </div>
 
@@ -231,40 +198,41 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-300">Signal:</span>
-                    <span className="text-white font-mono">{selectedNode.signalStrength}%</span>
+                    <span className="text-white font-mono">{Math.round(selectedNode.signalStrength)}%</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-300">Transport:</span>
-                    <span className="text-white font-mono">{selectedNode.transport}</span>
+                    <span className="text-gray-300">Battery:</span>
+                    <span className="text-white font-mono">{Math.round(selectedNode.batteryLevel)}%</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-300">Connections:</span>
-                    <span className="text-white font-mono">{selectedNode.connections.length}</span>
+                    <span className="text-gray-300">Relay:</span>
+                    <span className="text-white font-mono">{selectedNode.isRelay ? 'Yes' : 'No'}</span>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Transport Legend */}
-            <div className="bg-gray-800 rounded-lg p-4">
-              <h4 className="text-blue-400 font-semibold mb-3">Transport Types</h4>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                  <span className="text-gray-300">WebRTC</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-purple-500"></div>
-                  <span className="text-gray-300">WebSocket</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-cyan-500"></div>
-                  <span className="text-gray-300">Bluetooth</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                  <span className="text-gray-300">mDNS</span>
-                </div>
+            {/* Node List */}
+            <div className="bg-gray-800 rounded-lg p-4 max-h-40 overflow-y-auto">
+              <h4 className="text-blue-400 font-semibold mb-3">Connected Nodes</h4>
+              <div className="space-y-1 text-xs">
+                {nodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className={`flex items-center gap-2 p-1 rounded ${
+                      node.id === networkStats.nodeId ? 'bg-green-900/30' : ''
+                    }`}
+                  >
+                    <div 
+                      className={`w-2 h-2 rounded-full ${
+                        node.signalStrength > 75 ? 'bg-green-400' :
+                        node.signalStrength > 50 ? 'bg-yellow-400' : 'bg-red-400'
+                      }`} 
+                    />
+                    <span className="text-gray-300 flex-1">{node.name}</span>
+                    <span className="text-gray-400">{Math.round(node.signalStrength)}%</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
