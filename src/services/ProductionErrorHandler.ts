@@ -1,8 +1,7 @@
-
 export interface ErrorReport {
   id: string;
   timestamp: number;
-  type: 'network' | 'audio' | 'encryption' | 'storage' | 'system';
+  type: 'network' | 'audio' | 'encryption' | 'storage' | 'system' | 'emergency';
   severity: 'low' | 'medium' | 'high' | 'critical';
   message: string;
   stack?: string;
@@ -72,7 +71,7 @@ export class ProductionErrorHandler {
     message: string,
     error?: Error
   ): ErrorReport['severity'] {
-    if (type === 'system' || message.includes('critical')) return 'critical';
+    if (type === 'system' || type === 'emergency' || message.includes('critical')) return 'critical';
     if (type === 'encryption' || type === 'audio') return 'high';
     if (type === 'network' && message.includes('timeout')) return 'medium';
     return 'low';
@@ -91,6 +90,9 @@ export class ProductionErrorHandler {
         break;
       case 'storage':
         this.handleStorageError(errorReport);
+        break;
+      case 'emergency':
+        this.handleEmergencyError(errorReport);
         break;
     }
   }
@@ -117,6 +119,11 @@ export class ProductionErrorHandler {
 
   private handleStorageError(errorReport: ErrorReport) {
     console.warn('Storage error detected, using memory fallback');
+  }
+
+  private handleEmergencyError(errorReport: ErrorReport) {
+    console.error('Emergency system error detected, attempting failsafe procedures');
+    // Emergency-specific recovery logic would go here
   }
 
   resolveError(errorId: string) {

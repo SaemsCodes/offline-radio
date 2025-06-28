@@ -1,4 +1,3 @@
-
 interface EmergencyBeacon {
   id: string;
   senderId: string;
@@ -11,7 +10,7 @@ interface EmergencyBeacon {
 }
 
 interface EmergencyAlert {
-  beaconId: string;
+  beaconId?: string; // Make optional since it gets generated
   type: 'medical' | 'fire' | 'security' | 'natural-disaster' | 'other';
   severity: 1 | 2 | 3 | 4 | 5; // 5 being most severe
   location?: GeolocationCoordinates;
