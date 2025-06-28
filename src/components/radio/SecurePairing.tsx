@@ -1,9 +1,17 @@
+
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Shield, Users, Key, Check, X, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Button } from '../ui/button';
 import { useToast } from '../ui/use-toast';
 import { unifiedMeshService } from '../../services/UnifiedMeshService';
+
+interface PairingResult {
+  success: boolean;
+  deviceId?: string;
+  deviceName?: string;
+  error?: string;
+}
 
 interface SecurePairingProps {
   isVisible: boolean;
@@ -57,8 +65,8 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
 
     setIsProcessing(true);
     try {
-      const result = await unifiedMeshService.processPairingCode(inputCode);
-      if (result.success) {
+      const result: PairingResult = await unifiedMeshService.processPairingCode(inputCode);
+      if (result.success && result.deviceId && result.deviceName) {
         setSelectedDevice(result.deviceId);
         toast({
           title: "Device Found",
@@ -67,7 +75,7 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
       } else {
         toast({
           title: "Invalid Code",
-          description: "The pairing code is invalid or expired",
+          description: result.error || "The pairing code is invalid or expired",
           variant: "destructive"
         });
       }

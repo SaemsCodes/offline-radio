@@ -246,6 +246,8 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
             {isPoweredOn && (
               <AudioMetrics
                 metrics={audioMetrics}
+                isRecording={isTransmitting}
+                isPoweredOn={isPoweredOn}
               />
             )}
 
