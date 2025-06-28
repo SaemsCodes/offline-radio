@@ -1,4 +1,3 @@
-
 import { EventEmitter } from 'events';
 
 export interface DiscoveredPeer {
@@ -114,7 +113,7 @@ export class NetworkDiscoveryService extends EventEmitter {
     });
   }
 
-  private handleMDNSPeerDiscovery(data: any) {
+  private handleMDNSPeerDiscovery(data: Record<string, any>) {
     if (data.serviceId === this.getOwnServiceId()) return;
 
     const peer: DiscoveredPeer = {

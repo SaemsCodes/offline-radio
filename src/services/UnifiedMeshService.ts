@@ -164,9 +164,9 @@ class UnifiedMeshService {
           id: peer.id,
           name: peer.name || `Peer-${peer.id.slice(-6)}`,
           transport: 'webrtc', // Default transport for native peers
-          address: peer.address || 'native',
+          address: (peer as any).address || 'native',
           signalStrength: 80,
-          capabilities: peer.capabilities || ['voice', 'text'],
+          capabilities: (peer as any).capabilities || ['voice', 'text'],
           lastSeen: Date.now(),
           isReachable: true
         };

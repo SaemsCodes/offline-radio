@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
@@ -16,7 +15,8 @@ import {
   AlertTriangle,
   Wifi,
   Battery,
-  Signal
+  Signal,
+  X
 } from 'lucide-react';
 import { ChannelSelector } from './radio/ChannelSelector';
 import { EnhancedPTTButton } from './radio/EnhancedPTTButton';
@@ -28,7 +28,12 @@ import { ProductionDashboard } from './radio/ProductionDashboard';
 import { useUnifiedRadioMesh } from '../hooks/useUnifiedRadioMesh';
 import { useToast } from './ui/use-toast';
 
-export const WalkieTalkieRadio: React.FC = () => {
+interface WalkieTalkieRadioProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, onClose }) => {
   const [isPoweredOn, setIsPoweredOn] = useState(false);
   const [channel, setChannel] = useState(1);
   const [volume, setVolume] = useState(7);
@@ -115,9 +120,11 @@ export const WalkieTalkieRadio: React.FC = () => {
     }
   };
 
+  if (!isOpen) return null;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-800 p-4">
-      <div className="max-w-md mx-auto">
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+      <div className="relative w-full max-w-md">
         <Card className="bg-black border-2 border-yellow-400 shadow-2xl shadow-yellow-400/20">
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
@@ -148,6 +155,14 @@ export const WalkieTalkieRadio: React.FC = () => {
                   className="text-gray-400 hover:bg-gray-400/10"
                 >
                   <Settings className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClose}
+                  className="text-red-400 hover:bg-red-400/10"
+                >
+                  <X className="w-4 h-4" />
                 </Button>
               </div>
             </div>
@@ -213,7 +228,7 @@ export const WalkieTalkieRadio: React.FC = () => {
             <ChannelSelector
               currentChannel={channel}
               onChannelChange={handleChannelChange}
-              disabled={!isPoweredOn}
+              disabled={isPoweredOn}
             />
 
             <Separator className="bg-gray-700" />
@@ -231,8 +246,6 @@ export const WalkieTalkieRadio: React.FC = () => {
             {isPoweredOn && (
               <AudioMetrics
                 metrics={audioMetrics}
-                isTransmitting={isTransmitting}
-                isReceiving={isReceiving}
               />
             )}
 
@@ -289,27 +302,27 @@ export const WalkieTalkieRadio: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Modals */}
+        <SettingsPanel
+          isVisible={showSettings}
+          onClose={() => setShowSettings(false)}
+          volume={volume}
+          onVolumeChange={setVolume}
+          encryptionEnabled={encryptionEnabled}
+          onEncryptionToggle={setEncryptionEnabled}
+        />
+
+        <SecurePairing
+          isVisible={showPairing}
+          onClose={() => setShowPairing(false)}
+        />
+
+        <ProductionDashboard
+          isVisible={showDashboard}
+          onClose={() => setShowDashboard(false)}
+        />
       </div>
-
-      {/* Modals */}
-      <SettingsPanel
-        isVisible={showSettings}
-        onClose={() => setShowSettings(false)}
-        volume={volume}
-        onVolumeChange={setVolume}
-        encryptionEnabled={encryptionEnabled}
-        onEncryptionToggle={setEncryptionEnabled}
-      />
-
-      <SecurePairing
-        isVisible={showPairing}
-        onClose={() => setShowPairing(false)}
-      />
-
-      <ProductionDashboard
-        isVisible={showDashboard}
-        onClose={() => setShowDashboard(false)}
-      />
     </div>
   );
 };

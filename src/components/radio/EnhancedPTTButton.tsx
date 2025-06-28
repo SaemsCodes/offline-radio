@@ -5,18 +5,21 @@ import { Mic, MicOff, AlertCircle } from 'lucide-react';
 import { useAudioManager } from '../../hooks/useAudioManager';
 
 interface EnhancedPTTButtonProps {
-  onAudioData: (audioData: Blob) => void;
-  isPoweredOn: boolean;
-  isConnected: boolean;
+  onAudioData: (audioData: Blob, isEmergency?: boolean) => void;
+  isEnabled: boolean;
+  isTransmitting: boolean;
+  volume: number;
+  encryptionEnabled: boolean;
 }
 
 export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
   onAudioData,
-  isPoweredOn,
-  isConnected
+  isEnabled,
+  isTransmitting,
+  volume,
+  encryptionEnabled
 }) => {
   const [isPressed, setIsPressed] = useState(false);
-  const [isTransmitting, setIsTransmitting] = useState(false);
   
   const {
     isRecording,
@@ -31,22 +34,20 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
   // Set up real-time audio chunk handler
   useEffect(() => {
     setAudioChunkHandler((chunk: Blob) => {
-      if (isPressed && isConnected) {
+      if (isPressed && isEnabled) {
         onAudioData(chunk);
       }
     });
-  }, [isPressed, isConnected, onAudioData, setAudioChunkHandler]);
+  }, [isPressed, isEnabled, onAudioData, setAudioChunkHandler]);
 
   const handleMouseDown = async () => {
-    if (!isPoweredOn || !isInitialized || !isConnected) return;
+    if (!isEnabled || !isInitialized) return;
     
     setIsPressed(true);
-    setIsTransmitting(true);
     
     const success = await startRecording();
     if (!success) {
       setIsPressed(false);
-      setIsTransmitting(false);
     }
   };
 
@@ -54,10 +55,9 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
     if (!isPressed) return;
     
     setIsPressed(false);
-    setIsTransmitting(false);
     
     const audioBlob = await stopRecording();
-    if (audioBlob && isConnected) {
+    if (audioBlob && isEnabled) {
       onAudioData(audioBlob);
     }
   };
@@ -80,11 +80,10 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
   };
 
   const getButtonState = () => {
-    if (!isPoweredOn) return 'disabled';
+    if (!isEnabled) return 'disabled';
     if (!isInitialized) return 'loading';
-    if (!isConnected) return 'disconnected';
     if (error) return 'error';
-    if (isTransmitting) return 'transmitting';
+    if (isTransmitting || isPressed) return 'transmitting';
     return 'ready';
   };
 
@@ -96,8 +95,6 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
         return 'bg-gradient-to-b from-red-500 to-red-700 border-red-400 shadow-lg shadow-red-500/50';
       case 'ready':
         return 'bg-gradient-to-b from-orange-500 to-orange-700 border-orange-400 hover:from-orange-400 hover:to-orange-600 shadow-lg';
-      case 'disconnected':
-        return 'bg-gradient-to-b from-yellow-600 to-yellow-800 border-yellow-500';
       case 'error':
         return 'bg-gradient-to-b from-red-600 to-red-800 border-red-500';
       case 'loading':
@@ -115,14 +112,12 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
         return 'TRANSMITTING';
       case 'ready':
         return 'PUSH TO TALK';
-      case 'disconnected':
-        return 'NO CONNECTION';
       case 'error':
         return 'AUDIO ERROR';
       case 'loading':
         return 'INITIALIZING';
       default:
-        return 'PWR OFF';
+        return 'DISABLED';
     }
   };
 
@@ -166,11 +161,11 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
         onMouseLeave={handleMouseLeave}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
-        disabled={!isPoweredOn}
+        disabled={!isEnabled}
         className={`w-full h-20 rounded-2xl border-4 flex items-center justify-center transition-all duration-200 select-none ${getButtonStyles()}`}
         whileTap={{ scale: 0.95 }}
         animate={
-          isTransmitting ? { 
+          isTransmitting || isPressed ? { 
             boxShadow: [
               '0 0 20px rgba(239, 68, 68, 0.5)', 
               '0 0 40px rgba(239, 68, 68, 0.8)', 
@@ -179,14 +174,14 @@ export const EnhancedPTTButton: React.FC<EnhancedPTTButtonProps> = ({
           } : {}
         }
         transition={{ 
-          repeat: isTransmitting ? Infinity : 0, 
+          repeat: (isTransmitting || isPressed) ? Infinity : 0, 
           duration: 1 
         }}
       >
         <div className="flex flex-col items-center space-y-1">
           {getIcon()}
           <span className={`text-sm font-bold ${
-            isPoweredOn ? 'text-white' : 'text-gray-500'
+            isEnabled ? 'text-white' : 'text-gray-500'
           }`}>
             {getButtonText()}
           </span>
