@@ -4,6 +4,9 @@ import { EncryptionService, createEncryptionService, type EncryptedMessage } fro
 import { networkDiscoveryService, type DiscoveredPeer } from './NetworkDiscoveryService';
 import { createAdaptiveRoutingService, type AdaptiveRoutingService, type QualityOfService } from './AdaptiveRoutingService';
 import { connectionPoolService, type PooledConnection } from './ConnectionPoolService';
+import { productionErrorHandler } from './ProductionErrorHandler';
+import { messagePersistenceService } from './MessagePersistenceService';
+import { networkAnalyticsService } from './NetworkAnalyticsService';
 
 export interface ChannelTransmission {
   id: string;
@@ -67,6 +70,46 @@ class UnifiedMeshService {
 
   constructor() {
     this.initializeService();
+    this.setupProductionFeatures();
+  }
+
+  private setupProductionFeatures() {
+    // Set up message retry handling
+    window.addEventListener('mesh-retry-message', (event: any) => {
+      const { messageId } = event.detail;
+      this.retryFailedMessage(messageId);
+    });
+
+    // Set up error logging for critical operations
+    this.setupErrorLogging();
+  }
+
+  private setupErrorLogging() {
+    // Override console.error to capture errors
+    const originalError = console.error;
+    console.error = (...args) => {
+      const message = args.join(' ');
+      if (message.includes('mesh') || message.includes('network') || message.includes('audio')) {
+        productionErrorHandler.logError('system', message, undefined, {
+          args: args.filter(arg => typeof arg !== 'object')
+        });
+      }
+      originalError.apply(console, args);
+    };
+  }
+
+  private async retryFailedMessage(messageId: string) {
+    try {
+      const canRetry = messagePersistenceService.retryFailedMessage(messageId);
+      if (canRetry) {
+        networkAnalyticsService.recordEvent('message', false, { 
+          retry: true, 
+          messageId 
+        });
+      }
+    } catch (error) {
+      productionErrorHandler.logError('system', 'Failed to retry message', error as Error, { messageId });
+    }
   }
 
   private async initializeService() {
@@ -116,7 +159,18 @@ class UnifiedMeshService {
       await MeshNetworking.startNetwork();
       
       MeshNetworking.addListener('peerDiscovered', (peer: MeshPeer) => {
-        this.handlePeerDiscovered(peer);
+        // Convert MeshPeer to DiscoveredPeer format
+        const discoveredPeer: DiscoveredPeer = {
+          id: peer.id,
+          name: peer.name || `Peer-${peer.id.slice(-6)}`,
+          transport: 'webrtc', // Default transport for native peers
+          address: peer.address || 'native',
+          signalStrength: 80,
+          capabilities: peer.capabilities || ['voice', 'text'],
+          lastSeen: Date.now(),
+          isReachable: true
+        };
+        this.handlePeerDiscovered(discoveredPeer);
       });
 
       MeshNetworking.addListener('peerLost', (peerId: string) => {
@@ -182,19 +236,32 @@ class UnifiedMeshService {
   }
 
   private handlePeerDiscovered(peer: DiscoveredPeer) {
-    this.addPeerToChannel(this.activeChannel, peer.id);
-    
-    // Add route to routing table
-    if (this.routingService) {
-      this.routingService.addRoute(peer.id, peer.id, {
-        latency: 100 - peer.signalStrength, // Convert signal strength to latency estimate
-        reliability: peer.signalStrength,
+    try {
+      this.addPeerToChannel(this.activeChannel, peer.id);
+      
+      // Add route to routing table
+      if (this.routingService) {
+        this.routingService.addRoute(peer.id, peer.id, {
+          latency: 100 - peer.signalStrength,
+          reliability: peer.signalStrength,
+          transport: peer.transport,
+          bandwidth: this.estimateBandwidth(peer.transport)
+        });
+      }
+
+      // Record analytics
+      networkAnalyticsService.recordEvent('discovery', true, {
         transport: peer.transport,
-        bandwidth: this.estimateBandwidth(peer.transport)
+        signalStrength: peer.signalStrength
+      }, peer.id, peer.transport, undefined, undefined, peer.signalStrength);
+
+      console.log(`Peer discovered: ${peer.name} (${peer.id}) via ${peer.transport}`);
+    } catch (error) {
+      productionErrorHandler.logError('network', 'Failed to handle peer discovery', error as Error, {
+        peerId: peer.id,
+        transport: peer.transport
       });
     }
-
-    console.log(`Peer discovered: ${peer.name} (${peer.id}) via ${peer.transport}`);
   }
 
   private estimateBandwidth(transport: string): number {
@@ -208,13 +275,23 @@ class UnifiedMeshService {
   }
 
   private handlePeerLost(peerId: string) {
-    this.peersByChannel.forEach((peers, channel) => {
-      peers.delete(peerId);
-      if (peers.size === 0) {
-        this.peersByChannel.delete(channel);
-      }
-    });
-    this.updateNetworkMetrics();
+    try {
+      this.peersByChannel.forEach((peers, channel) => {
+        peers.delete(peerId);
+        if (peers.size === 0) {
+          this.peersByChannel.delete(channel);
+        }
+      });
+
+      // Record analytics
+      networkAnalyticsService.recordEvent('disconnection', true, {}, peerId);
+
+      this.updateNetworkMetrics();
+    } catch (error) {
+      productionErrorHandler.logError('network', 'Failed to handle peer loss', error as Error, {
+        peerId
+      });
+    }
   }
 
   private addPeerToChannel(channel: number, peerId: string) {
@@ -416,55 +493,105 @@ class UnifiedMeshService {
 
   // Enhanced transmission methods with routing and connection pooling
   public async transmitText(text: string, encrypt: boolean = false, priority: 'low' | 'normal' | 'high' | 'emergency' = 'normal'): Promise<boolean> {
+    const startTime = performance.now();
+    const messageId = `text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
     try {
-      if (encrypt && this.encryptionService) {
-        return await this.transmitEncryptedText(text, priority);
-      }
-
-      const qos: QualityOfService = {
+      // Store message for persistence
+      messagePersistenceService.storeMessage(
+        messageId,
+        this.deviceId,
+        this.activeChannel,
+        text,
+        'text',
+        encrypt,
         priority,
-        maxLatency: priority === 'emergency' ? 100 : priority === 'high' ? 200 : 1000,
-        minBandwidth: 10000, // 10KB/s for text
-        requiresEncryption: encrypt,
-        allowRetransmission: priority !== 'emergency'
-      };
+        undefined,
+        priority === 'emergency' ? undefined : 24 * 60 * 60 * 1000 // 24 hour expiry for non-emergency
+      );
 
-      const messageData = {
-        id: `text-${Date.now()}`,
-        senderId: this.deviceId,
-        channel: this.activeChannel,
-        content: text,
-        type: 'text',
-        timestamp: Date.now(),
-        priority
-      };
+      let success = false;
 
-      if (this.isNativeEnvironment) {
-        const message: MeshMessage = {
-          id: messageData.id,
-          sender: this.deviceId,
-          destination: 'broadcast',
-          payload: JSON.stringify({ channel: this.activeChannel, text }),
-          timestamp: Date.now(),
-          hops: 0,
-          type: 'text',
-          maxHops: priority === 'emergency' ? 10 : 5
-        };
-        
-        const result = await MeshNetworking.sendMessage({ message });
-        return result.success;
+      if (encrypt && this.encryptionService) {
+        success = await this.transmitEncryptedText(text, priority);
       } else {
-        // Use connection pooling and adaptive routing for web
-        const success = await this.broadcastToOptimalPeers(messageData, qos);
-        
-        if (this.discoveryChannel) {
-          this.discoveryChannel.postMessage({ type: 'message', ...messageData });
+        const qos: QualityOfService = {
+          priority,
+          maxLatency: priority === 'emergency' ? 100 : priority === 'high' ? 200 : 1000,
+          minBandwidth: 10000,
+          requiresEncryption: encrypt,
+          allowRetransmission: priority !== 'emergency'
+        };
+
+        const messageData = {
+          id: messageId,
+          senderId: this.deviceId,
+          channel: this.activeChannel,
+          content: text,
+          type: 'text',
+          timestamp: Date.now(),
+          priority
+        };
+
+        if (this.isNativeEnvironment) {
+          const message: MeshMessage = {
+            id: messageId,
+            sender: this.deviceId,
+            destination: 'broadcast',
+            payload: JSON.stringify({ channel: this.activeChannel, text }),
+            timestamp: Date.now(),
+            hops: 0,
+            type: 'text',
+            maxHops: priority === 'emergency' ? 10 : 5
+          };
+          
+          const result = await MeshNetworking.sendMessage({ message });
+          success = result.success;
+        } else {
+          success = await this.broadcastToOptimalPeers(messageData, qos);
+          
+          if (this.discoveryChannel) {
+            this.discoveryChannel.postMessage({ type: 'message', ...messageData });
+          }
         }
-        
-        return success;
       }
+
+      const endTime = performance.now();
+      const responseTime = endTime - startTime;
+
+      // Update metrics and analytics
+      productionErrorHandler.updateMetrics(responseTime, success);
+      networkAnalyticsService.recordEvent('message', success, {
+        type: 'text',
+        priority,
+        encrypted: encrypt,
+        responseTime
+      });
+
+      if (success) {
+        messagePersistenceService.markDelivered(messageId, responseTime);
+      }
+
+      return success;
     } catch (error) {
-      console.error('Text transmission failed:', error);
+      const endTime = performance.now();
+      const responseTime = endTime - startTime;
+
+      productionErrorHandler.logError('network', 'Text transmission failed', error as Error, {
+        messageId,
+        priority,
+        encrypted: encrypt,
+        responseTime
+      });
+
+      productionErrorHandler.updateMetrics(responseTime, false);
+      networkAnalyticsService.recordEvent('message', false, {
+        type: 'text',
+        priority,
+        encrypted: encrypt,
+        error: (error as Error).message
+      });
+
       return false;
     }
   }
@@ -537,58 +664,110 @@ class UnifiedMeshService {
   }
 
   public async transmitVoice(audioData: ArrayBuffer, encrypt: boolean = false, priority: 'normal' | 'high' | 'emergency' = 'normal'): Promise<boolean> {
+    const startTime = performance.now();
+    const messageId = `voice-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
     try {
-      if (encrypt && this.encryptionService) {
-        return await this.transmitEncryptedVoice(audioData, priority);
-      }
-
-      const qos: QualityOfService = {
+      // Store voice message for persistence (with shorter expiry due to size)
+      messagePersistenceService.storeMessage(
+        messageId,
+        this.deviceId,
+        this.activeChannel,
+        audioData,
+        'voice',
+        encrypt,
         priority,
-        maxLatency: priority === 'emergency' ? 150 : 300,
-        minBandwidth: 64000, // 64KB/s for voice
-        requiresEncryption: encrypt,
-        allowRetransmission: false // Voice is real-time
-      };
+        undefined,
+        priority === 'emergency' ? undefined : 2 * 60 * 60 * 1000 // 2 hour expiry for voice
+      );
 
-      if (this.isNativeEnvironment) {
-        const message: MeshMessage = {
-          id: `voice-${Date.now()}`,
-          sender: this.deviceId,
-          destination: 'broadcast',
-          payload: new Uint8Array(audioData),
-          timestamp: Date.now(),
-          hops: 0,
-          type: 'voice',
-          maxHops: priority === 'emergency' ? 10 : 5
-        };
-        
-        const result = await MeshNetworking.sendMessage({ message });
-        return result.success;
+      let success = false;
+
+      if (encrypt && this.encryptionService) {
+        success = await this.transmitEncryptedVoice(audioData, priority);
       } else {
-        const uint8Array = new Uint8Array(audioData);
-        const base64Audio = btoa(String.fromCharCode(...uint8Array));
-        
-        const voiceData = {
-          id: `voice-${Date.now()}`,
-          senderId: this.deviceId,
-          channel: this.activeChannel,
-          type: 'voice',
-          audioData: base64Audio,
-          timestamp: Date.now(),
-          priority
+        const qos: QualityOfService = {
+          priority,
+          maxLatency: priority === 'emergency' ? 150 : 300,
+          minBandwidth: 64000,
+          requiresEncryption: encrypt,
+          allowRetransmission: false
         };
 
-        // Use optimized transmission for voice
-        const success = await this.broadcastToOptimalPeers(voiceData, qos);
+        if (this.isNativeEnvironment) {
+          const message: MeshMessage = {
+            id: messageId,
+            sender: this.deviceId,
+            destination: 'broadcast',
+            payload: new Uint8Array(audioData),
+            timestamp: Date.now(),
+            hops: 0,
+            type: 'voice',
+            maxHops: priority === 'emergency' ? 10 : 5
+          };
+          
+          const result = await MeshNetworking.sendMessage({ message });
+          success = result.success;
+        } else {
+          const uint8Array = new Uint8Array(audioData);
+          const base64Audio = btoa(String.fromCharCode(...uint8Array));
+          
+          const voiceData = {
+            id: messageId,
+            senderId: this.deviceId,
+            channel: this.activeChannel,
+            type: 'voice',
+            audioData: base64Audio,
+            timestamp: Date.now(),
+            priority
+          };
 
-        if (this.discoveryChannel) {
-          this.discoveryChannel.postMessage({ type: 'voice', ...voiceData });
+          success = await this.broadcastToOptimalPeers(voiceData, qos);
+
+          if (this.discoveryChannel) {
+            this.discoveryChannel.postMessage({ type: 'voice', ...voiceData });
+          }
         }
-        
-        return success;
       }
+
+      const endTime = performance.now();
+      const responseTime = endTime - startTime;
+
+      // Update metrics and analytics
+      productionErrorHandler.updateMetrics(responseTime, success);
+      networkAnalyticsService.recordEvent('message', success, {
+        type: 'voice',
+        priority,
+        encrypted: encrypt,
+        audioSize: audioData.byteLength,
+        responseTime
+      });
+
+      if (success) {
+        messagePersistenceService.markDelivered(messageId, responseTime);
+      }
+
+      return success;
     } catch (error) {
-      console.error('Voice transmission failed:', error);
+      const endTime = performance.now();
+      const responseTime = endTime - startTime;
+
+      productionErrorHandler.logError('audio', 'Voice transmission failed', error as Error, {
+        messageId,
+        priority,
+        encrypted: encrypt,
+        audioSize: audioData.byteLength,
+        responseTime
+      });
+
+      productionErrorHandler.updateMetrics(responseTime, false);
+      networkAnalyticsService.recordEvent('message', false, {
+        type: 'voice',
+        priority,
+        encrypted: encrypt,
+        error: (error as Error).message
+      });
+
       return false;
     }
   }
@@ -666,13 +845,30 @@ class UnifiedMeshService {
 
   // Enhanced network information methods
   public getNetworkStatus() {
-    return {
-      deviceMetrics: this.deviceStatus,
-      discoveredPeers: networkDiscoveryService.getDiscoveredPeers(),
-      availableTransports: networkDiscoveryService.getAvailableTransports(),
-      routingMetrics: this.routingService?.getRouteMetrics(),
-      connectionMetrics: connectionPoolService.getMetrics()
-    };
+    try {
+      return {
+        deviceMetrics: this.deviceStatus,
+        discoveredPeers: networkDiscoveryService.getDiscoveredPeers(),
+        availableTransports: networkDiscoveryService.getAvailableTransports(),
+        routingMetrics: this.routingService?.getRouteMetrics(),
+        connectionMetrics: connectionPoolService.getMetrics(),
+        systemMetrics: productionErrorHandler.getMetrics(),
+        messageStats: messagePersistenceService.getStats(),
+        networkAnalytics: networkAnalyticsService.getAnalytics()
+      };
+    } catch (error) {
+      productionErrorHandler.logError('system', 'Failed to get network status', error as Error);
+      return {
+        deviceMetrics: this.deviceStatus,
+        discoveredPeers: [],
+        availableTransports: [],
+        routingMetrics: null,
+        connectionMetrics: { activeConnections: 0, totalConnections: 0, averageLatency: 0 },
+        systemMetrics: productionErrorHandler.getMetrics(),
+        messageStats: messagePersistenceService.getStats(),
+        networkAnalytics: networkAnalyticsService.getAnalytics()
+      };
+    }
   }
 
   public async optimizeNetwork(): Promise<void> {
@@ -737,6 +933,8 @@ class UnifiedMeshService {
       await networkDiscoveryService.stopDiscovery();
       this.routingService?.shutdown();
       connectionPoolService.shutdown();
+      messagePersistenceService.shutdown();
+      networkAnalyticsService.shutdown();
       
       if (this.discoveryChannel) {
         this.discoveryChannel.close();
@@ -750,7 +948,7 @@ class UnifiedMeshService {
       
       await audioManager.destroy();
     } catch (error) {
-      console.error('Shutdown failed:', error);
+      productionErrorHandler.logError('system', 'Shutdown failed', error as Error);
     }
   }
 }

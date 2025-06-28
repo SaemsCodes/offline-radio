@@ -21,7 +21,14 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
     isWifiConnected: false,
     isBluetoothEnabled: false,
     volume: 7,
-    signalQuality: 'none'
+    signalQuality: 'none',
+    networkMetrics: {
+      totalPeers: 0,
+      activePeers: 0,
+      averageLatency: 0,
+      networkReliability: 0,
+      availableTransports: []
+    }
   });
   const [messages, setMessages] = useState<Message[]>([]);
   const [isReceiving, setIsReceiving] = useState(false);

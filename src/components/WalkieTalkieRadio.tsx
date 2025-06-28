@@ -1,343 +1,315 @@
 
 import React, { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Separator } from './ui/separator';
+import { Alert, AlertDescription } from './ui/alert';
 import { 
   Power, 
+  Volume2, 
   Settings, 
-  Antenna,
-  WifiOff,
+  Shield, 
+  Users, 
+  Activity,
+  BarChart3,
+  AlertTriangle,
   Wifi,
-  Shield
+  Battery,
+  Signal
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { RadioControls } from './radio/RadioControls';
 import { ChannelSelector } from './radio/ChannelSelector';
-import { StatusDisplay } from './radio/StatusDisplay';
 import { EnhancedPTTButton } from './radio/EnhancedPTTButton';
+import { StatusDisplay } from './radio/StatusDisplay';
 import { AudioMetrics } from './radio/AudioMetrics';
-import { SettingsPanel } from './radio/SettingsPanel';
 import { SecurePairing } from './radio/SecurePairing';
-import { Settings as AdvancedSettings } from '../pages/Settings';
+import { SettingsPanel } from './radio/SettingsPanel';
+import { ProductionDashboard } from './radio/ProductionDashboard';
 import { useUnifiedRadioMesh } from '../hooks/useUnifiedRadioMesh';
-import { unifiedMeshService } from '../services/UnifiedMeshService';
+import { useToast } from './ui/use-toast';
 
-interface WalkieTalkieRadioProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
-export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, onClose }) => {
+export const WalkieTalkieRadio: React.FC = () => {
   const [isPoweredOn, setIsPoweredOn] = useState(false);
-  const [volume, setVolume] = useState(7);
   const [channel, setChannel] = useState(1);
-  const [squelch, setSquelch] = useState(3);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [showSecurePairing, setShowSecurePairing] = useState(false);
-  const [pairedDevices, setPairedDevices] = useState([]);
-  
-  const { 
-    isConnected, 
-    peerCount, 
+  const [volume, setVolume] = useState(7);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showPairing, setShowPairing] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
+  const [encryptionEnabled, setEncryptionEnabled] = useState(false);
+
+  const { toast } = useToast();
+
+  const {
+    isConnected,
+    peerCount,
+    isTransmitting,
     isReceiving,
-    batteryLevel,
     connectionQuality,
-    isOnline,
-    isWifiConnected,
-    isBluetoothEnabled,
+    batteryLevel,
     messages,
     audioMetrics,
     sendMessage,
     handleAudioData
   } = useUnifiedRadioMesh(isPoweredOn, channel);
 
+  useEffect(() => {
+    if (isPoweredOn && isConnected) {
+      toast({
+        title: "Radio Connected",
+        description: `Connected to mesh network on channel ${channel}`,
+      });
+    }
+  }, [isPoweredOn, isConnected, channel, toast]);
+
   const handlePowerToggle = () => {
     setIsPoweredOn(!isPoweredOn);
-    if (isPoweredOn) {
-      setIsSettingsOpen(false);
-      setShowAdvancedSettings(false);
-      setShowSecurePairing(false);
+    if (!isPoweredOn) {
+      toast({
+        title: "Radio Powered On",
+        description: "Connecting to mesh network...",
+      });
+    } else {
+      toast({
+        title: "Radio Powered Off",
+        description: "Disconnected from mesh network",
+      });
     }
   };
 
-  // Sync volume with mesh service
-  useEffect(() => {
+  const handleChannelChange = (newChannel: number) => {
+    setChannel(newChannel);
     if (isPoweredOn) {
-      unifiedMeshService.setVolume(volume);
+      toast({
+        title: `Channel Changed`,
+        description: `Now on channel ${newChannel}`,
+      });
     }
-  }, [volume, isPoweredOn]);
+  };
 
-  // Update paired devices list
-  useEffect(() => {
-    if (isPoweredOn) {
-      const updatePairedDevices = () => {
-        setPairedDevices(unifiedMeshService.getPairedDevices());
-      };
-      
-      updatePairedDevices();
-      const interval = setInterval(updatePairedDevices, 1000);
-      return () => clearInterval(interval);
+  const handleEmergencyTransmission = (audioData: Blob, isEmergency: boolean = false) => {
+    if (isEmergency) {
+      toast({
+        title: "Emergency Transmission",
+        description: "Broadcasting emergency message with high priority",
+        variant: "destructive"
+      });
     }
-  }, [isPoweredOn]);
-
-  const handleGeneratePairingCode = async () => {
-    return await unifiedMeshService.generatePairingCode();
+    handleAudioData(audioData);
   };
 
-  const handleProcessPairingCode = async (code: string) => {
-    return await unifiedMeshService.processPairingCode(code);
+  const getSignalQualityColor = () => {
+    switch (connectionQuality) {
+      case 'excellent': return 'text-green-400';
+      case 'good': return 'text-blue-400';
+      case 'poor': return 'text-yellow-400';
+      default: return 'text-red-400';
+    }
   };
 
-  const handleVerifyPairing = async (deviceId: string, code: string) => {
-    return await unifiedMeshService.verifyPairing(deviceId, code);
+  const getSignalQualityIcon = () => {
+    switch (connectionQuality) {
+      case 'excellent': return <Signal className="w-4 h-4 text-green-400" />;
+      case 'good': return <Signal className="w-4 h-4 text-blue-400" />;
+      case 'poor': return <Signal className="w-4 h-4 text-yellow-400" />;
+      default: return <Signal className="w-4 h-4 text-red-400" />;
+    }
   };
-
-  const handleRemovePairing = (deviceId: string) => {
-    unifiedMeshService.removePairing(deviceId);
-  };
-
-  const handleRotateKeys = async () => {
-    await unifiedMeshService.rotateKeys();
-  };
-
-  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Background overlay */}
-      <div 
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{
-          backgroundImage: `linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1482881497185-d4a9ddbe4151?auto=format&fit=crop&w=2000&q=80')`
-        }}
-      />
-      
-      {/* Walkie-Talkie Device */}
-      <motion.div
-        initial={{ scale: 0.8, opacity: 0, rotateY: -20 }}
-        animate={{ scale: 1, opacity: 1, rotateY: 0 }}
-        exit={{ scale: 0.8, opacity: 0, rotateY: 20 }}
-        transition={{ type: 'spring', damping: 20, stiffness: 200 }}
-        className="relative w-full max-w-sm mx-auto"
-      >
-        {/* Main Radio Body */}
-        <div className="bg-gradient-to-b from-gray-800 to-black rounded-t-3xl rounded-b-xl shadow-2xl border-4 border-gray-700 overflow-hidden">
-          {/* Top Section - Antenna and Status */}
-          <div className="bg-gradient-to-r from-gray-900 to-gray-800 p-4 border-b-2 border-gray-600">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-800 p-4">
+      <div className="max-w-md mx-auto">
+        <Card className="bg-black border-2 border-yellow-400 shadow-2xl shadow-yellow-400/20">
+          <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Antenna className={`w-4 h-4 ${isPoweredOn ? 'text-green-400' : 'text-gray-500'}`} />
-                <div className={`text-xs font-mono ${isPoweredOn ? 'text-green-400' : 'text-gray-500'}`}>
-                  CH {channel.toString().padStart(2, '0')}
-                </div>
-                {isPoweredOn && pairedDevices.filter(d => d.verified).length > 0 && (
-                  <Shield className="w-4 h-4 text-blue-400" />
-                )}
+              <CardTitle className="text-2xl font-bold text-yellow-400 font-mono">
+                MESH RADIO
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDashboard(true)}
+                  className="text-blue-400 hover:bg-blue-400/10"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPairing(true)}
+                  className="text-green-400 hover:bg-green-400/10"
+                >
+                  <Shield className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowSettings(true)}
+                  className="text-gray-400 hover:bg-gray-400/10"
+                >
+                  <Settings className="w-4 h-4" />
+                </Button>
               </div>
-              <StatusDisplay 
+            </div>
+            
+            <div className="flex items-center justify-between">
+              <StatusDisplay
                 isPoweredOn={isPoweredOn}
                 isConnected={isConnected}
                 peerCount={peerCount}
                 batteryLevel={batteryLevel}
               />
-            </div>
-          </div>
-
-          {/* Enhanced Display Screen */}
-          <div className="bg-black p-4">
-            <div className={`rounded-lg p-4 transition-all duration-300 ${
-              isPoweredOn 
-                ? 'bg-gradient-to-b from-green-900 to-green-950 border border-green-700' 
-                : 'bg-gray-900 border border-gray-700'
-            }`}>
-              {isPoweredOn ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-green-400 text-sm font-mono">
-                    <span>MESH RADIO</span>
-                    <div className="flex items-center space-x-1">
-                      {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                      {pairedDevices.filter(d => d.verified).length > 0 && (
-                        <Shield className="w-3 h-3 text-blue-400" />
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-green-300 text-xs font-mono">
-                    {peerCount} PEERS • {connectionQuality.toUpperCase()}
-                  </div>
-                  <div className="text-green-300 text-xs font-mono">
-                    VOL: {volume} | SQL: {squelch}
-                  </div>
-                  <div className="text-green-300 text-xs font-mono">
-                    QUALITY: {audioMetrics.quality.toUpperCase()} | S/N: {audioMetrics.signalToNoise}dB
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs font-mono">
-                    <span className={isOnline ? 'text-blue-400' : 'text-gray-400'}>
-                      NET: {isOnline ? 'ON' : 'OFF'}
-                    </span>
-                    <span className={isWifiConnected ? 'text-blue-400' : 'text-gray-400'}>
-                      WIFI: {isWifiConnected ? 'ON' : 'OFF'}
-                    </span>
-                    <span className={isBluetoothEnabled ? 'text-blue-400' : 'text-gray-400'}>
-                      BT: {isBluetoothEnabled ? 'ON' : 'OFF'}
-                    </span>
-                  </div>
-                  {pairedDevices.filter(d => d.verified).length > 0 && (
-                    <div className="text-blue-400 text-xs font-mono">
-                      ENCRYPTED: {pairedDevices.filter(d => d.verified).length} DEVICES
-                    </div>
-                  )}
-                  {isReceiving && (
-                    <motion.div
-                      animate={{ opacity: [1, 0.5, 1] }}
-                      transition={{ repeat: Infinity, duration: 0.5 }}
-                      className="text-blue-400 text-xs font-mono font-bold"
-                    >
-                      *** RECEIVING ***
-                    </motion.div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-gray-600 text-center text-sm">
-                  POWER OFF
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Audio Metrics */}
-          {isPoweredOn && (
-            <div className="px-4 pb-4">
-              <AudioMetrics 
-                metrics={audioMetrics}
-                isRecording={false}
-                isPoweredOn={isPoweredOn}
-              />
-            </div>
-          )}
-
-          {/* Control Panel */}
-          <div className="p-4 space-y-4">
-            {/* Power and Settings Row */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={handlePowerToggle}
-                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all duration-300 ${
-                  isPoweredOn 
-                    ? 'bg-red-600 border-red-400 shadow-lg shadow-red-500/50' 
-                    : 'bg-gray-700 border-gray-500 hover:bg-gray-600'
-                }`}
-              >
-                <Power className="w-6 h-6 text-white" />
-              </button>
-
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                  disabled={!isPoweredOn}
-                  className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
-                    isPoweredOn 
-                      ? 'bg-gray-700 border-gray-500 hover:bg-gray-600 text-white' 
-                      : 'bg-gray-800 border-gray-700 text-gray-500'
-                  }`}
-                >
-                  <Settings className="w-5 h-5" />
-                </button>
-
-                <button
-                  onClick={() => setShowSecurePairing(!showSecurePairing)}
-                  disabled={!isPoweredOn}
-                  className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
-                    isPoweredOn 
-                      ? 'bg-blue-700 border-blue-500 hover:bg-blue-600 text-white' 
-                      : 'bg-gray-800 border-gray-700 text-gray-500'
-                  }`}
-                >
-                  <Shield className="w-5 h-5" />
-                </button>
-
-                <button
-                  onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                  disabled={!isPoweredOn}
-                  className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
-                    isPoweredOn 
-                      ? 'bg-purple-700 border-purple-500 hover:bg-purple-600 text-white' 
-                      : 'bg-gray-800 border-gray-700 text-gray-500'
-                  }`}
-                >
-                  <span className="text-xs font-bold">ADV</span>
-                </button>
+              <div className="flex items-center gap-2">
+                {getSignalQualityIcon()}
+                {encryptionEnabled && (
+                  <Shield className="w-4 h-4 text-green-400" />
+                )}
               </div>
             </div>
+          </CardHeader>
+
+          <CardContent className="space-y-6">
+            {/* Power Button */}
+            <div className="flex justify-center">
+              <Button
+                onClick={handlePowerToggle}
+                className={`w-16 h-16 rounded-full text-2xl font-bold transition-all duration-300 ${
+                  isPoweredOn
+                    ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-600/50'
+                    : 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-600/50'
+                }`}
+              >
+                <Power className="w-8 h-8" />
+              </Button>
+            </div>
+
+            {/* Status Indicators */}
+            {isPoweredOn && (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="text-center">
+                  <div className={`text-sm font-mono ${getSignalQualityColor()}`}>
+                    {connectionQuality.toUpperCase()}
+                  </div>
+                  <div className="text-xs text-gray-400">SIGNAL</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-mono text-blue-400">
+                    {peerCount}
+                  </div>
+                  <div className="text-xs text-gray-400">PEERS</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-mono text-yellow-400">
+                    CH {channel}
+                  </div>
+                  <div className="text-xs text-gray-400">CHANNEL</div>
+                </div>
+              </div>
+            )}
+
+            <Separator className="bg-gray-700" />
 
             {/* Channel Selector */}
-            <ChannelSelector 
-              channel={channel}
-              onChannelChange={setChannel}
-              isPoweredOn={isPoweredOn}
+            <ChannelSelector
+              currentChannel={channel}
+              onChannelChange={handleChannelChange}
+              disabled={!isPoweredOn}
             />
 
-            {/* Volume and Squelch Controls */}
-            <RadioControls
-              volume={volume}
-              squelch={squelch}
-              onVolumeChange={setVolume}
-              onSquelchChange={setSquelch}
-              isPoweredOn={isPoweredOn}
-            />
-          </div>
+            <Separator className="bg-gray-700" />
 
-          {/* Enhanced PTT Button */}
-          <div className="p-4 pt-0">
+            {/* Enhanced PTT Button */}
             <EnhancedPTTButton
-              onAudioData={handleAudioData}
-              isPoweredOn={isPoweredOn}
-              isConnected={isConnected}
+              isEnabled={isPoweredOn && isConnected}
+              isTransmitting={isTransmitting}
+              onAudioData={handleEmergencyTransmission}
+              volume={volume}
+              encryptionEnabled={encryptionEnabled}
             />
-          </div>
 
-          {/* Close Button */}
-          <div className="absolute top-2 right-2">
-            <button
-              onClick={onClose}
-              className="w-8 h-8 bg-black/50 hover:bg-black/70 rounded-full flex items-center justify-center transition-colors"
-            >
-              <span className="text-white text-lg">×</span>
-            </button>
-          </div>
-        </div>
+            {/* Audio Metrics */}
+            {isPoweredOn && (
+              <AudioMetrics
+                metrics={audioMetrics}
+                isTransmitting={isTransmitting}
+                isReceiving={isReceiving}
+              />
+            )}
 
-        {/* Settings Panel */}
-        <AnimatePresence>
-          {isSettingsOpen && isPoweredOn && (
-            <SettingsPanel 
-              onClose={() => setIsSettingsOpen(false)}
-              messages={messages}
-              onSendMessage={sendMessage}
-            />
-          )}
-        </AnimatePresence>
+            {/* Connection Status Alert */}
+            {isPoweredOn && !isConnected && (
+              <Alert className="bg-red-900/20 border-red-500">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription className="text-red-300">
+                  No mesh network connection. Check your network settings.
+                </AlertDescription>
+              </Alert>
+            )}
 
-        {/* Secure Pairing Modal */}
-        <AnimatePresence>
-          {showSecurePairing && isPoweredOn && (
-            <SecurePairing
-              onClose={() => setShowSecurePairing(false)}
-              pairedDevices={pairedDevices}
-              onGeneratePairingCode={handleGeneratePairingCode}
-              onProcessPairingCode={handleProcessPairingCode}
-              onVerifyPairing={handleVerifyPairing}
-              onRemovePairing={handleRemovePairing}
-              onRotateKeys={handleRotateKeys}
-            />
-          )}
-        </AnimatePresence>
+            {/* Encryption Status */}
+            {isPoweredOn && encryptionEnabled && (
+              <Alert className="bg-green-900/20 border-green-500">
+                <Shield className="h-4 w-4" />
+                <AlertDescription className="text-green-300">
+                  End-to-end encryption enabled. All transmissions are secure.
+                </AlertDescription>
+              </Alert>
+            )}
 
-        {/* Advanced Settings Modal */}
-        <AnimatePresence>
-          {showAdvancedSettings && isPoweredOn && (
-            <AdvancedSettings onClose={() => setShowAdvancedSettings(false)} />
-          )}
-        </AnimatePresence>
-      </motion.div>
+            {/* Recent Messages */}
+            {isPoweredOn && messages.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-gray-300">Recent Activity</h3>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {messages.slice(-3).map((message) => (
+                    <div key={message.id} className="text-xs text-gray-400 font-mono">
+                      <span className="text-blue-400">{message.sender}:</span> {message.message}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Volume Control */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Volume2 className="w-4 h-4 text-gray-400" />
+                <span className="text-sm text-gray-400">Volume</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {[...Array(10)].map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-1 h-3 ${
+                      i < volume ? 'bg-green-400' : 'bg-gray-600'
+                    } ${i >= 7 ? 'bg-red-400' : ''}`}
+                  />
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Modals */}
+      <SettingsPanel
+        isVisible={showSettings}
+        onClose={() => setShowSettings(false)}
+        volume={volume}
+        onVolumeChange={setVolume}
+        encryptionEnabled={encryptionEnabled}
+        onEncryptionToggle={setEncryptionEnabled}
+      />
+
+      <SecurePairing
+        isVisible={showPairing}
+        onClose={() => setShowPairing(false)}
+      />
+
+      <ProductionDashboard
+        isVisible={showDashboard}
+        onClose={() => setShowDashboard(false)}
+      />
     </div>
   );
 };

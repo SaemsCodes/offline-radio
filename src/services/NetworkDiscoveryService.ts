@@ -59,9 +59,10 @@ export class NetworkDiscoveryService extends EventEmitter {
     });
 
     // Check Bluetooth LE availability
-    if ('bluetooth' in navigator) {
+    if ('bluetooth' in navigator && navigator.bluetooth) {
       try {
-        const isAvailable = await navigator.bluetooth.getAvailability();
+        const bluetooth = navigator.bluetooth as any;
+        const isAvailable = bluetooth.getAvailability ? await bluetooth.getAvailability() : false;
         this.availableTransports.set('bluetooth', {
           type: 'bluetooth',
           isAvailable,
