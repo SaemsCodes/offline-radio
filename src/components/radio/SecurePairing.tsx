@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Shield, Users, Key, Check, X, RefreshCw, AlertTriangle } from 'lucide-react';
@@ -65,7 +64,13 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
 
     setIsProcessing(true);
     try {
-      const result: PairingResult = await unifiedMeshService.processPairingCode(inputCode);
+      const pairing = await unifiedMeshService.processPairingCode(inputCode);
+      const result: PairingResult = {
+        success: true,
+        deviceId: pairing.deviceId,
+        deviceName: `Device-${pairing.deviceId.slice(-6)}`
+      };
+      
       if (result.success && result.deviceId && result.deviceName) {
         setSelectedDevice(result.deviceId);
         toast({
@@ -148,7 +153,7 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
   if (!isVisible) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -252,7 +257,33 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
                     className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-green-500"
                   />
                   <Button
-                    onClick={verifyPairing}
+                    onClick={async () => {
+                      try {
+                        const success = await unifiedMeshService.verifyPairing(selectedDevice, verificationCode);
+                        if (success) {
+                          toast({
+                            title: "Pairing Successful",
+                            description: "Device successfully paired and encrypted communication enabled",
+                          });
+                          loadPairedDevices();
+                          setSelectedDevice(null);
+                          setVerificationCode('');
+                          setInputCode('');
+                        } else {
+                          toast({
+                            title: "Verification Failed",
+                            description: "Invalid verification code",
+                            variant: "destructive"
+                          });
+                        }
+                      } catch (error) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to verify pairing",
+                          variant: "destructive"
+                        });
+                      }
+                    }}
                     disabled={!verificationCode}
                     className="bg-green-600 hover:bg-green-700"
                   >
@@ -270,7 +301,21 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
             <h3 className="text-lg font-semibold text-green-400">Paired Devices</h3>
             {pairedDevices.length > 0 && (
               <Button
-                onClick={rotateKeys}
+                onClick={async () => {
+                  try {
+                    await unifiedMeshService.rotateKeys();
+                    toast({
+                      title: "Keys Rotated",
+                      description: "Encryption keys have been rotated for all paired devices",
+                    });
+                  } catch (error) {
+                    toast({
+                      title: "Error",
+                      description: "Failed to rotate encryption keys",
+                      variant: "destructive"
+                    });
+                  }
+                }}
                 variant="outline"
                 size="sm"
                 className="text-yellow-400 border-yellow-400 hover:bg-yellow-400/10"
@@ -291,7 +336,7 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
                 {pairedDevices.map((device) => (
                   <div key={device.deviceId} className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
                     <div>
-                      <div className="font-mono text-white">{device.name}</div>
+                      <div className="font-mono text-white">{device.name || `Device-${device.deviceId.slice(-6)}`}</div>
                       <div className="text-xs text-gray-400">{device.deviceId}</div>
                       <div className="flex items-center gap-2 mt-1">
                         {device.verified ? (
@@ -308,7 +353,14 @@ export const SecurePairing: React.FC<SecurePairingProps> = ({ isVisible, onClose
                       </div>
                     </div>
                     <Button
-                      onClick={() => removePairing(device.deviceId)}
+                      onClick={() => {
+                        unifiedMeshService.removePairing(device.deviceId);
+                        loadPairedDevices();
+                        toast({
+                          title: "Device Removed",
+                          description: "Device pairing has been removed",
+                        });
+                      }}
                       variant="destructive"
                       size="sm"
                     >

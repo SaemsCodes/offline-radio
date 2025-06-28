@@ -71,6 +71,7 @@ class UnifiedMeshService {
   constructor() {
     this.initializeService();
     this.setupProductionFeatures();
+    this.setupEmergencyHandling();
   }
 
   private setupProductionFeatures() {
@@ -949,6 +950,67 @@ class UnifiedMeshService {
       await audioManager.destroy();
     } catch (error) {
       productionErrorHandler.logError('system', 'Shutdown failed', error as Error);
+    }
+  }
+
+  private setupEmergencyHandling() {
+    // Listen for emergency beacon events
+    document.addEventListener('emergency-beacon-sent', (event: any) => {
+      const { beacon, alert } = event.detail;
+      this.broadcastEmergencyBeacon(beacon, alert);
+    });
+
+    document.addEventListener('emergency-beacon-retransmit', (event: any) => {
+      const { beacon } = event.detail;
+      this.retransmitEmergencyBeacon(beacon);
+    });
+  }
+
+  private async broadcastEmergencyBeacon(beacon: any, alert: any) {
+    try {
+      const emergencyMessage = {
+        type: 'emergency-beacon',
+        beacon,
+        alert,
+        timestamp: Date.now()
+      };
+
+      // Broadcast with highest priority
+      await this.transmitText(
+        JSON.stringify(emergencyMessage),
+        true, // encrypted
+        'emergency' // highest priority
+      );
+
+      console.log('Emergency beacon broadcasted:', beacon.id);
+    } catch (error) {
+      productionErrorHandler.logError('emergency', 'Failed to broadcast emergency beacon', error as Error, {
+        beaconId: beacon.id
+      });
+    }
+  }
+
+  private async retransmitEmergencyBeacon(beacon: any) {
+    try {
+      const retransmissionMessage = {
+        type: 'emergency-retransmission',
+        beacon,
+        retransmissionCount: beacon.retransmissionCount,
+        timestamp: Date.now()
+      };
+
+      await this.transmitText(
+        JSON.stringify(retransmissionMessage),
+        true,
+        'emergency'
+      );
+
+      console.log(`Emergency beacon retransmitted (${beacon.retransmissionCount}/10):`, beacon.id);
+    } catch (error) {
+      productionErrorHandler.logError('emergency', 'Failed to retransmit emergency beacon', error as Error, {
+        beaconId: beacon.id,
+        retransmissionCount: beacon.retransmissionCount
+      });
     }
   }
 }

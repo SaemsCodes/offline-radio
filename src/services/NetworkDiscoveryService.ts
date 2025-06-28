@@ -3,9 +3,8 @@ import { EventEmitter } from 'events';
 export interface DiscoveredPeer {
   id: string;
   name: string;
-  transport: 'webrtc' | 'websocket' | 'bluetooth' | 'mdns';
+  transport: string;
   address: string;
-  port?: number;
   signalStrength: number;
   capabilities: string[];
   lastSeen: number;
@@ -13,307 +12,378 @@ export interface DiscoveredPeer {
 }
 
 export interface NetworkTransport {
-  type: 'webrtc' | 'websocket' | 'bluetooth' | 'mdns';
+  type: string;
   isAvailable: boolean;
-  quality: number; // 0-100
-  latency: number;
-  bandwidth: number;
-  batteryImpact: 'low' | 'medium' | 'high';
+  lastSeen: number;
+  capabilities: string[];
 }
 
-export class NetworkDiscoveryService extends EventEmitter {
+class NetworkDiscoveryService extends EventEmitter {
   private discoveredPeers: Map<string, DiscoveredPeer> = new Map();
-  private availableTransports: Map<string, NetworkTransport> = new Map();
-  private discoveryInterval: number | null = null;
-  private isDiscovering: boolean = false;
-  private bluetoothAdvertising: boolean = false;
-  private mdnsService: any = null;
+  private availableTransports: NetworkTransport[] = [
+    { type: 'webrtc', isAvailable: false, lastSeen: 0, capabilities: ['voice', 'text', 'file'] },
+    { type: 'websocket', isAvailable: false, lastSeen: 0, capabilities: ['text', 'file'] },
+    { type: 'bluetooth', isAvailable: false, lastSeen: 0, capabilities: ['voice', 'text'] },
+    { type: 'mdns', isAvailable: false, lastSeen: 0, capabilities: ['discovery'] }
+  ];
+  private discoveryInterval: NodeJS.Timeout | null = null;
+  private optimizationInterval: NodeJS.Timeout | null = null;
+  private eventLog: Array<{ timestamp: number; category: string; event: string; metadata: Record<string, any> }> = [];
 
   constructor() {
     super();
-    this.initializeTransports();
+    this.setupTransportDetection();
   }
 
-  private async initializeTransports() {
-    // Initialize WebRTC transport
-    if (window.RTCPeerConnection) {
-      this.availableTransports.set('webrtc', {
-        type: 'webrtc',
-        isAvailable: true,
-        quality: 95,
-        latency: 50,
-        bandwidth: 1000000, // 1Mbps
-        batteryImpact: 'medium'
-      });
-    }
-
-    // Initialize WebSocket transport
-    this.availableTransports.set('websocket', {
-      type: 'websocket',
-      isAvailable: true,
-      quality: 85,
-      latency: 100,
-      bandwidth: 500000, // 500Kbps
-      batteryImpact: 'low'
-    });
-
-    // Check Bluetooth LE availability
-    if ('bluetooth' in navigator && navigator.bluetooth) {
-      try {
-        const bluetooth = navigator.bluetooth as any;
-        const isAvailable = bluetooth.getAvailability ? await bluetooth.getAvailability() : false;
-        this.availableTransports.set('bluetooth', {
-          type: 'bluetooth',
-          isAvailable,
-          quality: 70,
-          latency: 200,
-          bandwidth: 100000, // 100Kbps
-          batteryImpact: 'high'
-        });
-      } catch (error) {
-        console.warn('Bluetooth not available:', error);
+  private setupTransportDetection() {
+    // Detect WebRTC support
+    if (typeof RTCPeerConnection !== 'undefined') {
+      const transport = this.availableTransports.find(t => t.type === 'webrtc');
+      if (transport) {
+        transport.isAvailable = true;
+        transport.lastSeen = Date.now();
       }
     }
 
-    // Initialize mDNS/Bonjour service discovery (simulated for web)
-    this.initializeMDNS();
-
-    this.emit('transports-initialized', Array.from(this.availableTransports.values()));
-  }
-
-  private initializeMDNS() {
-    // In a real implementation, this would use native mDNS/Bonjour
-    // For web, we simulate service discovery via broadcast channels
-    this.availableTransports.set('mdns', {
-      type: 'mdns',
-      isAvailable: true,
-      quality: 90,
-      latency: 25,
-      bandwidth: 10000000, // 10Mbps (local network)
-      batteryImpact: 'low'
-    });
-
-    // Simulate mDNS service registration
-    const serviceChannel = new BroadcastChannel('mdns-service-discovery');
-    
-    serviceChannel.onmessage = (event) => {
-      if (event.data.type === 'service-announcement') {
-        this.handleMDNSPeerDiscovery(event.data);
+    // Detect WebSocket support
+    if (typeof WebSocket !== 'undefined') {
+      const transport = this.availableTransports.find(t => t.type === 'websocket');
+      if (transport) {
+        transport.isAvailable = true;
+        transport.lastSeen = Date.now();
       }
-    };
+    }
 
-    // Announce our service
-    serviceChannel.postMessage({
-      type: 'service-announcement',
-      serviceId: `mesh-radio-${Math.random().toString(36).substr(2, 9)}`,
-      serviceName: 'Mesh Radio Service',
-      transport: 'mdns',
-      capabilities: ['voice', 'text', 'encryption'],
-      timestamp: Date.now()
-    });
-  }
+    // Detect Bluetooth support
+    if ('bluetooth' in navigator) {
+      const transport = this.availableTransports.find(t => t.type === 'bluetooth');
+      if (transport) {
+        transport.isAvailable = true;
+        transport.lastSeen = Date.now();
+      }
+    }
 
-  private handleMDNSPeerDiscovery(data: Record<string, any>) {
-    if (data.serviceId === this.getOwnServiceId()) return;
-
-    const peer: DiscoveredPeer = {
-      id: data.serviceId,
-      name: data.serviceName,
-      transport: 'mdns',
-      address: 'local',
-      signalStrength: 95,
-      capabilities: data.capabilities || [],
-      lastSeen: Date.now(),
-      isReachable: true
-    };
-
-    this.discoveredPeers.set(peer.id, peer);
-    this.emit('peer-discovered', peer);
-  }
-
-  private getOwnServiceId(): string {
-    return `mesh-radio-${window.location.hostname}`;
+    // mDNS is available in local network environments
+    const transport = this.availableTransports.find(t => t.type === 'mdns');
+    if (transport) {
+      transport.isAvailable = true;
+      transport.lastSeen = Date.now();
+    }
   }
 
   async startDiscovery(): Promise<void> {
-    if (this.isDiscovering) return;
+    this.logEvent('discovery', 'start', { timestamp: Date.now() });
 
-    this.isDiscovering = true;
-    console.log('Starting network discovery...');
+    // Initialize available transports
+    await this.initializeMDNSDiscovery();
+    await this.initializeWebRTCDiscovery();
+    await this.initializeWebSocketDiscovery();
+    await this.initializeBluetoothDiscovery();
 
-    // Start WebRTC peer discovery
-    this.startWebRTCDiscovery();
+    // Start periodic discovery
+    this.discoveryInterval = setInterval(() => {
+      this.performDiscovery();
+    }, 10000); // Every 10 seconds
 
-    // Start Bluetooth LE discovery
-    await this.startBluetoothDiscovery();
-
-    // Start periodic discovery updates
-    this.discoveryInterval = window.setInterval(() => {
-      this.updatePeerReachability();
+    // Start optimization cycle
+    this.optimizationInterval = setInterval(() => {
       this.optimizeTransports();
-    }, 5000);
+    }, 30000); // Every 30 seconds
 
-    this.emit('discovery-started');
+    // Initial discovery
+    await this.performDiscovery();
   }
 
-  private startWebRTCDiscovery() {
-    const webrtcChannel = new BroadcastChannel('webrtc-peer-discovery');
-    
-    webrtcChannel.postMessage({
-      type: 'peer-announcement',
-      peerId: this.getOwnServiceId(),
-      transport: 'webrtc',
-      capabilities: ['voice', 'text', 'file-transfer'],
-      timestamp: Date.now()
-    });
-
-    webrtcChannel.onmessage = (event) => {
-      if (event.data.type === 'peer-announcement' && event.data.peerId !== this.getOwnServiceId()) {
-        const peer: DiscoveredPeer = {
-          id: event.data.peerId,
-          name: `WebRTC Peer ${event.data.peerId.substr(-6)}`,
-          transport: 'webrtc',
-          address: 'webrtc',
-          signalStrength: 80,
-          capabilities: event.data.capabilities || [],
+  private async initializeMDNSDiscovery(): Promise<void> {
+    try {
+      // Simulate mDNS discovery for local network peers
+      const mockLocalPeers = [
+        {
+          id: 'mdns-peer-1',
+          name: 'Local Radio 1',
+          transport: 'mdns',
+          address: '192.168.1.100',
+          signalStrength: 95,
+          capabilities: ['voice', 'text'],
           lastSeen: Date.now(),
           isReachable: true
-        };
+        },
+        {
+          id: 'mdns-peer-2',
+          name: 'Local Radio 2',
+          transport: 'mdns',
+          address: '192.168.1.101',
+          signalStrength: 88,
+          capabilities: ['voice', 'text'],
+          lastSeen: Date.now(),
+          isReachable: true
+        }
+      ];
 
-        this.discoveredPeers.set(peer.id, peer);
-        this.emit('peer-discovered', peer);
-      }
-    };
-  }
+      // Simulate discovery delay
+      setTimeout(() => {
+        mockLocalPeers.forEach(peer => this.handleDiscoveredPeer(peer));
+      }, 2000);
 
-  private async startBluetoothDiscovery() {
-    const bluetoothTransport = this.availableTransports.get('bluetooth');
-    if (!bluetoothTransport?.isAvailable) return;
-
-    try {
-      // Request Bluetooth LE advertising
-      if ('bluetooth' in navigator && 'requestDevice' in navigator.bluetooth) {
-        // In a real implementation, this would start BLE advertising
-        this.bluetoothAdvertising = true;
-        console.log('Bluetooth LE advertising started');
-        
-        // Simulate discovering Bluetooth peers
-        setTimeout(() => {
-          const mockBluetoothPeer: DiscoveredPeer = {
-            id: 'ble-device-001',
-            name: 'Bluetooth Mesh Device',
-            transport: 'bluetooth',
-            address: 'aa:bb:cc:dd:ee:ff',
-            signalStrength: 65,
-            capabilities: ['voice', 'emergency'],
-            lastSeen: Date.now(),
-            isReachable: true
-          };
-
-          this.discoveredPeers.set(mockBluetoothPeer.id, mockBluetoothPeer);
-          this.emit('peer-discovered', mockBluetoothPeer);
-        }, 2000);
-      }
+      this.logEvent('transport', 'mdns-initialized', { peerCount: mockLocalPeers.length });
     } catch (error) {
-      console.warn('Bluetooth discovery failed:', error);
+      this.logEvent('transport', 'mdns-failed', { error: (error as Error).message });
     }
   }
 
-  private updatePeerReachability() {
-    const now = Date.now();
-    const staleThreshold = 30000; // 30 seconds
+  private async initializeWebRTCDiscovery(): Promise<void> {
+    try {
+      if (typeof RTCPeerConnection === 'undefined') {
+        throw new Error('WebRTC not supported');
+      }
 
-    this.discoveredPeers.forEach((peer, id) => {
-      if (now - peer.lastSeen > staleThreshold) {
-        peer.isReachable = false;
-        peer.signalStrength = Math.max(0, peer.signalStrength - 10);
-        
-        if (peer.signalStrength === 0) {
-          this.discoveredPeers.delete(id);
-          this.emit('peer-lost', id);
-        } else {
-          this.emit('peer-updated', peer);
+      // Set up WebRTC peer discovery through signaling server simulation
+      const mockWebRTCPeers = [
+        {
+          id: 'webrtc-peer-1',
+          name: 'Remote Radio Alpha',
+          transport: 'webrtc',
+          address: 'webrtc://peer-alpha',
+          signalStrength: 75,
+          capabilities: ['voice', 'text', 'file'],
+          lastSeen: Date.now(),
+          isReachable: true
+        },
+        {
+          id: 'webrtc-peer-2',
+          name: 'Remote Radio Beta',
+          transport: 'webrtc',
+          address: 'webrtc://peer-beta',
+          signalStrength: 62,
+          capabilities: ['voice', 'text'],
+          lastSeen: Date.now(),
+          isReachable: true
         }
-      }
-    });
+      ];
+
+      setTimeout(() => {
+        mockWebRTCPeers.forEach(peer => this.handleDiscoveredPeer(peer));
+      }, 3000);
+
+      this.logEvent('transport', 'webrtc-initialized', { peerCount: mockWebRTCPeers.length });
+    } catch (error) {
+      this.logEvent('transport', 'webrtc-failed', { error: (error as Error).message });
+    }
   }
 
-  private optimizeTransports() {
-    const networkMetrics = this.getNetworkMetrics();
+  private async initializeWebSocketDiscovery(): Promise<void> {
+    try {
+      if (typeof WebSocket === 'undefined') {
+        throw new Error('WebSocket not supported');
+      }
+
+      // Simulate WebSocket server discovery
+      const mockWSPeers = [
+        {
+          id: 'ws-peer-1',
+          name: 'Server Radio 1',
+          transport: 'websocket',
+          address: 'ws://mesh-server:8080',
+          signalStrength: 85,
+          capabilities: ['text', 'file'],
+          lastSeen: Date.now(),
+          isReachable: true
+        }
+      ];
+
+      setTimeout(() => {
+        mockWSPeers.forEach(peer => this.handleDiscoveredPeer(peer));
+      }, 1500);
+
+      this.logEvent('transport', 'websocket-initialized', { peerCount: mockWSPeers.length });
+    } catch (error) {
+      this.logEvent('transport', 'websocket-failed', { error: (error as Error).message });
+    }
+  }
+
+  private async initializeBluetoothDiscovery(): Promise<void> {
+    try {
+      if (!('bluetooth' in navigator)) {
+        throw new Error('Bluetooth not supported');
+      }
+
+      // Simulate Bluetooth device discovery
+      const mockBTPeers = [
+        {
+          id: 'bt-peer-1',
+          name: 'BT Radio Charlie',
+          transport: 'bluetooth',
+          address: '00:11:22:33:44:55',
+          signalStrength: 45,
+          capabilities: ['voice', 'text'],
+          lastSeen: Date.now(),
+          isReachable: true
+        }
+      ];
+
+      setTimeout(() => {
+        mockBTPeers.forEach(peer => this.handleDiscoveredPeer(peer));
+      }, 4000);
+
+      this.logEvent('transport', 'bluetooth-initialized', { peerCount: mockBTPeers.length });
+    } catch (error) {
+      this.logEvent('transport', 'bluetooth-failed', { error: (error as Error).message });
+    }
+  }
+
+  private async performDiscovery(): Promise<void> {
+    // Simulate ongoing peer discovery
+    const now = Date.now();
     
-    // Adjust transport quality based on current conditions
-    this.availableTransports.forEach((transport, type) => {
-      if (type === 'webrtc' && networkMetrics.packetLoss > 5) {
-        transport.quality = Math.max(50, transport.quality - 10);
-      } else if (type === 'bluetooth' && networkMetrics.batteryLevel < 20) {
-        transport.quality = Math.max(30, transport.quality - 15);
-      }
-    });
+    // Update signal strengths for existing peers
+    for (const peer of this.discoveredPeers.values()) {
+      // Simulate signal fluctuation
+      const fluctuation = (Math.random() - 0.5) * 10;
+      peer.signalStrength = Math.max(0, Math.min(100, peer.signalStrength + fluctuation));
+      peer.lastSeen = now;
+    }
 
-    this.emit('transports-optimized', Array.from(this.availableTransports.values()));
+    // Occasionally discover new peers
+    if (Math.random() < 0.1) { // 10% chance
+      const newPeer: DiscoveredPeer = {
+        id: `discovered-${Date.now()}`,
+        name: `Radio-${Math.random().toString(36).substr(2, 6)}`,
+        transport: ['webrtc', 'websocket', 'bluetooth'][Math.floor(Math.random() * 3)],
+        address: `addr-${Math.random().toString(36).substr(2, 8)}`,
+        signalStrength: Math.floor(Math.random() * 100),
+        capabilities: ['voice', 'text'],
+        lastSeen: now,
+        isReachable: true
+      };
+      this.handleDiscoveredPeer(newPeer);
+    }
+
+    this.logEvent('discovery', 'cycle-complete', { 
+      peerCount: this.discoveredPeers.size,
+      timestamp: now 
+    });
   }
 
-  private getNetworkMetrics() {
-    return {
-      packetLoss: Math.random() * 2, // 0-2%
-      latency: 50 + Math.random() * 100, // 50-150ms
-      batteryLevel: 75 + Math.random() * 25, // 75-100%
-      signalStrength: 80 + Math.random() * 20 // 80-100%
+  private handleDiscoveredPeer(peer: DiscoveredPeer): void {
+    const existingPeer = this.discoveredPeers.get(peer.id);
+    
+    if (existingPeer) {
+      // Update existing peer
+      existingPeer.lastSeen = Date.now();
+      existingPeer.signalStrength = peer.signalStrength;
+      existingPeer.isReachable = peer.isReachable;
+    } else {
+      // Add new peer
+      this.discoveredPeers.set(peer.id, peer);
+      this.emit('peer-discovered', peer);
+    }
+
+    // Update transport availability
+    const transport = this.availableTransports.find(t => t.type === peer.transport);
+    if (transport) {
+      transport.lastSeen = Date.now();
+      transport.isAvailable = true;
+    }
+  }
+
+  private optimizeTransports(): void {
+    const now = Date.now();
+    const STALE_THRESHOLD = 60000; // 60 seconds
+
+    // Remove stale peers
+    for (const [peerId, peer] of this.discoveredPeers.entries()) {
+      if (now - peer.lastSeen > STALE_THRESHOLD) {
+        this.discoveredPeers.delete(peerId);
+        this.emit('peer-lost', peerId);
+      }
+    }
+
+    // Update transport availability
+    this.availableTransports.forEach(transport => {
+      transport.isAvailable = now - transport.lastSeen < STALE_THRESHOLD;
+    });
+
+    this.emit('transports-optimized', this.availableTransports);
+  }
+
+  getDiscoveredPeers(): DiscoveredPeer[] {
+    return Array.from(this.discoveredPeers.values());
+  }
+
+  getAvailableTransports(): NetworkTransport[] {
+    return [...this.availableTransports];
+  }
+
+  getPeerById(peerId: string): DiscoveredPeer | undefined {
+    return this.discoveredPeers.get(peerId);
+  }
+
+  async testConnection(peerId: string): Promise<boolean> {
+    const peer = this.discoveredPeers.get(peerId);
+    if (!peer) {
+      return false;
+    }
+
+    try {
+      // Simplified connection test
+      const testData = JSON.stringify({ type: 'ping', timestamp: Date.now() });
+      
+      // In a real implementation, this would test the actual connection
+      // For now, we'll simulate based on signal strength
+      const success = peer.signalStrength > 30 && peer.isReachable;
+      
+      if (success) {
+        peer.lastSeen = Date.now();
+        peer.isReachable = true;
+      }
+      
+      return success;
+    } catch (error) {
+      console.error(`Connection test failed for peer ${peerId}:`, error);
+      peer.isReachable = false;
+      return false;
+    }
+  }
+
+  private logEvent(category: string, event: string, metadata: Record<string, any> = {}): void {
+    const logEntry = {
+      timestamp: Date.now(),
+      category,
+      event,
+      metadata: metadata as Record<string, any>
     };
+    
+    this.eventLog.push(logEntry);
+    
+    // Keep only recent events
+    if (this.eventLog.length > 1000) {
+      this.eventLog = this.eventLog.slice(-500);
+    }
+  }
+
+  getEventLog(): Array<{ timestamp: number; category: string; event: string; metadata: Record<string, any> }> {
+    return [...this.eventLog];
   }
 
   async stopDiscovery(): Promise<void> {
-    if (!this.isDiscovering) return;
-
     if (this.discoveryInterval) {
       clearInterval(this.discoveryInterval);
       this.discoveryInterval = null;
     }
 
-    this.isDiscovering = false;
-    this.bluetoothAdvertising = false;
-    this.discoveredPeers.clear();
-
-    this.emit('discovery-stopped');
-    console.log('Network discovery stopped');
-  }
-
-  getDiscoveredPeers(): DiscoveredPeer[] {
-    return Array.from(this.discoveredPeers.values()).filter(peer => peer.isReachable);
-  }
-
-  getAvailableTransports(): NetworkTransport[] {
-    return Array.from(this.availableTransports.values());
-  }
-
-  getBestTransportForPeer(peerId: string): NetworkTransport | null {
-    const peer = this.discoveredPeers.get(peerId);
-    if (!peer) return null;
-
-    const transport = this.availableTransports.get(peer.transport);
-    return transport || null;
-  }
-
-  async connectToPeer(peerId: string, preferredTransport?: string): Promise<boolean> {
-    const peer = this.discoveredPeers.get(peerId);
-    if (!peer) return false;
-
-    const transport = preferredTransport 
-      ? this.availableTransports.get(preferredTransport)
-      : this.getBestTransportForPeer(peerId);
-
-    if (!transport) return false;
-
-    try {
-      // Simulate connection establishment
-      await new Promise(resolve => setTimeout(resolve, transport.latency));
-      
-      this.emit('peer-connected', { peerId, transport: transport.type });
-      return true;
-    } catch (error) {
-      console.error(`Failed to connect to peer ${peerId}:`, error);
-      return false;
+    if (this.optimizationInterval) {
+      clearInterval(this.optimizationInterval);
+      this.optimizationInterval = null;
     }
+
+    this.logEvent('discovery', 'stop', { timestamp: Date.now() });
+  }
+
+  shutdown(): void {
+    this.stopDiscovery();
+    this.discoveredPeers.clear();
+    this.eventLog = [];
+    this.removeAllListeners();
   }
 }
 
