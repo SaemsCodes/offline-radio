@@ -1,6 +1,6 @@
-
 import { MeshNetworking, type MeshPeer, type MeshMessage, type MeshNetworkStatus } from '../plugins/mesh-networking-plugin';
 import { audioManager } from './AudioManager';
+import { EncryptionService, createEncryptionService, type EncryptedMessage } from './EncryptionService';
 
 export interface ChannelTransmission {
   id: string;
@@ -10,6 +10,7 @@ export interface ChannelTransmission {
   type: 'voice' | 'text';
   timestamp: number;
   signalStrength: number;
+  encrypted?: boolean;
 }
 
 export interface DeviceStatus {
@@ -39,6 +40,7 @@ class UnifiedMeshService {
   private statusListeners: Set<(status: DeviceStatus) => void> = new Set();
   private transmissionHistory: Map<string, ChannelTransmission> = new Map();
   private discoveryChannel: BroadcastChannel | null = null;
+  private encryptionService: EncryptionService | null = null;
 
   constructor() {
     this.initializeService();
@@ -47,6 +49,10 @@ class UnifiedMeshService {
   private async initializeService() {
     this.deviceId = this.generateDeviceId();
     this.isNativeEnvironment = window.navigator.userAgent.includes('Capacitor');
+
+    // Initialize encryption service
+    this.encryptionService = createEncryptionService(this.deviceId);
+    await this.encryptionService.initialize();
 
     if (this.isNativeEnvironment) {
       await this.initializeNative();
@@ -104,6 +110,8 @@ class UnifiedMeshService {
         this.handleWebMessage(event.data);
       } else if (event.data.type === 'voice' && event.data.channel === this.activeChannel) {
         this.handleWebVoiceMessage(event.data);
+      } else if (event.data.type === 'encrypted-message' && event.data.channel === this.activeChannel) {
+        this.handleEncryptedMessage(event.data);
       }
     };
   }
@@ -178,7 +186,8 @@ class UnifiedMeshService {
       content: message.payload,
       type: message.type as 'voice' | 'text',
       timestamp: message.timestamp,
-      signalStrength: 85
+      signalStrength: 85,
+      encrypted: false
     };
 
     this.processTransmission(transmission);
@@ -192,7 +201,8 @@ class UnifiedMeshService {
       content: data.content,
       type: data.type,
       timestamp: data.timestamp,
-      signalStrength: 75
+      signalStrength: 75,
+      encrypted: false
     };
 
     this.processTransmission(transmission);
@@ -200,7 +210,6 @@ class UnifiedMeshService {
 
   private async handleWebVoiceMessage(data: any) {
     try {
-      // Convert base64 back to ArrayBuffer
       const audioData = Uint8Array.from(atob(data.audioData), c => c.charCodeAt(0));
       
       const transmission: ChannelTransmission = {
@@ -210,12 +219,49 @@ class UnifiedMeshService {
         content: audioData.buffer,
         type: 'voice',
         timestamp: data.timestamp,
-        signalStrength: 75
+        signalStrength: 75,
+        encrypted: false
       };
 
       this.processTransmission(transmission);
     } catch (error) {
       console.error('Failed to process voice message:', error);
+    }
+  }
+
+  private async handleEncryptedMessage(data: any) {
+    if (!this.encryptionService) return;
+
+    try {
+      const encryptedMessage: EncryptedMessage = {
+        data: new Uint8Array(data.encryptedData).buffer,
+        iv: new Uint8Array(data.iv).buffer,
+        senderPublicKey: new Uint8Array(data.senderPublicKey).buffer
+      };
+
+      const decryptedData = await this.encryptionService.decryptMessage(encryptedMessage, data.senderId);
+      
+      let content: string | ArrayBuffer;
+      if (data.type === 'text') {
+        content = new TextDecoder().decode(decryptedData);
+      } else {
+        content = decryptedData;
+      }
+
+      const transmission: ChannelTransmission = {
+        id: data.id,
+        senderId: data.senderId,
+        channel: data.channel,
+        content,
+        type: data.type,
+        timestamp: data.timestamp,
+        signalStrength: 75,
+        encrypted: true
+      };
+
+      this.processTransmission(transmission);
+    } catch (error) {
+      console.error('Failed to decrypt message:', error);
     }
   }
 
@@ -266,7 +312,6 @@ class UnifiedMeshService {
       this.activeChannel = channel;
       this.updateSignalQuality();
       
-      // Announce channel change
       if (this.discoveryChannel) {
         this.discoveryChannel.postMessage({
           type: 'channel-change',
@@ -286,8 +331,12 @@ class UnifiedMeshService {
     return this.peersByChannel.get(this.activeChannel)?.size || 0;
   }
 
-  public async transmitText(text: string): Promise<boolean> {
+  public async transmitText(text: string, encrypt: boolean = false): Promise<boolean> {
     try {
+      if (encrypt && this.encryptionService) {
+        return await this.transmitEncryptedText(text);
+      }
+
       const messageData = {
         id: `text-${Date.now()}`,
         senderId: this.deviceId,
@@ -323,8 +372,48 @@ class UnifiedMeshService {
     }
   }
 
-  public async transmitVoice(audioData: ArrayBuffer): Promise<boolean> {
+  private async transmitEncryptedText(text: string): Promise<boolean> {
+    if (!this.encryptionService) return false;
+
+    const pairedDevices = this.encryptionService.getPairedDevices().filter(d => d.verified);
+    if (pairedDevices.length === 0) {
+      console.warn('No paired devices for encrypted transmission');
+      return false;
+    }
+
     try {
+      // For simplicity, encrypt for the first paired device
+      // In a real implementation, you'd encrypt for all paired devices or specific recipients
+      const recipient = pairedDevices[0];
+      const encryptedMessage = await this.encryptionService.encryptMessage(text, recipient.deviceId);
+
+      const messageData = {
+        id: `encrypted-text-${Date.now()}`,
+        senderId: this.deviceId,
+        channel: this.activeChannel,
+        type: 'text',
+        timestamp: Date.now(),
+        encryptedData: Array.from(new Uint8Array(encryptedMessage.data)),
+        iv: Array.from(new Uint8Array(encryptedMessage.iv)),
+        senderPublicKey: Array.from(new Uint8Array(encryptedMessage.senderPublicKey))
+      };
+
+      if (this.discoveryChannel) {
+        this.discoveryChannel.postMessage({ type: 'encrypted-message', ...messageData });
+      }
+      return true;
+    } catch (error) {
+      console.error('Encrypted text transmission failed:', error);
+      return false;
+    }
+  }
+
+  public async transmitVoice(audioData: ArrayBuffer, encrypt: boolean = false): Promise<boolean> {
+    try {
+      if (encrypt && this.encryptionService) {
+        return await this.transmitEncryptedVoice(audioData);
+      }
+
       if (this.isNativeEnvironment) {
         const message: MeshMessage = {
           id: `voice-${Date.now()}`,
@@ -340,7 +429,6 @@ class UnifiedMeshService {
         const result = await MeshNetworking.sendMessage({ message });
         return result.success;
       } else {
-        // Convert ArrayBuffer to base64 for web transmission
         const uint8Array = new Uint8Array(audioData);
         const base64Audio = btoa(String.fromCharCode(...uint8Array));
         
@@ -362,6 +450,76 @@ class UnifiedMeshService {
       console.error('Voice transmission failed:', error);
       return false;
     }
+  }
+
+  private async transmitEncryptedVoice(audioData: ArrayBuffer): Promise<boolean> {
+    if (!this.encryptionService) return false;
+
+    const pairedDevices = this.encryptionService.getPairedDevices().filter(d => d.verified);
+    if (pairedDevices.length === 0) {
+      console.warn('No paired devices for encrypted transmission');
+      return false;
+    }
+
+    try {
+      const recipient = pairedDevices[0];
+      const encryptedMessage = await this.encryptionService.encryptMessage(audioData, recipient.deviceId);
+
+      const messageData = {
+        id: `encrypted-voice-${Date.now()}`,
+        senderId: this.deviceId,
+        channel: this.activeChannel,
+        type: 'voice',
+        timestamp: Date.now(),
+        encryptedData: Array.from(new Uint8Array(encryptedMessage.data)),
+        iv: Array.from(new Uint8Array(encryptedMessage.iv)),
+        senderPublicKey: Array.from(new Uint8Array(encryptedMessage.senderPublicKey))
+      };
+
+      if (this.discoveryChannel) {
+        this.discoveryChannel.postMessage({ type: 'encrypted-message', ...messageData });
+      }
+      return true;
+    } catch (error) {
+      console.error('Encrypted voice transmission failed:', error);
+      return false;
+    }
+  }
+
+  // Encryption service access methods
+  public getEncryptionService(): EncryptionService | null {
+    return this.encryptionService;
+  }
+
+  public async generatePairingCode(): Promise<string> {
+    if (!this.encryptionService) throw new Error('Encryption service not available');
+    return await this.encryptionService.generatePairingCode();
+  }
+
+  public async processPairingCode(code: string) {
+    if (!this.encryptionService) throw new Error('Encryption service not available');
+    return await this.encryptionService.processPairingCode(code);
+  }
+
+  public async verifyPairing(deviceId: string, code: string): Promise<boolean> {
+    if (!this.encryptionService) throw new Error('Encryption service not available');
+    return await this.encryptionService.verifyPairing(deviceId, code);
+  }
+
+  public removePairing(deviceId: string): void {
+    if (this.encryptionService) {
+      this.encryptionService.removePairing(deviceId);
+    }
+  }
+
+  public async rotateKeys(): Promise<void> {
+    if (this.encryptionService) {
+      await this.encryptionService.rotateKeys();
+    }
+  }
+
+  public getPairedDevices() {
+    return this.encryptionService ? this.encryptionService.getPairedDevices() : [];
   }
 
   public onChannelTransmission(channel: number, listener: (transmission: ChannelTransmission) => void) {

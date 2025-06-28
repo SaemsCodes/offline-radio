@@ -1,14 +1,4 @@
-
 import { EventEmitter } from 'events';
-
-export interface AudioConfig {
-  sampleRate: number;
-  channelCount: number;
-  echoCancellation: boolean;
-  noiseSuppression: boolean;
-  autoGainControl: boolean;
-  latency: number;
-}
 
 export interface AudioMetrics {
   inputLevel: number;
@@ -21,118 +11,104 @@ export interface AudioMetrics {
 }
 
 export class AudioManager extends EventEmitter {
-  private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioWorklet: AudioWorkletNode | null = null;
+  private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
   private gainNode: GainNode | null = null;
-  private compressor: DynamicsCompressorNode | null = null;
-  private isRecording = false;
-  private isPlaying = false;
+  private noiseSuppressionNode: AudioWorkletNode | null = null;
+  private isInitialized: boolean = false;
+  private isRecording: boolean = false;
   private audioChunks: Blob[] = [];
-  private metrics: AudioMetrics = {
-    inputLevel: 0,
-    outputLevel: 0,
-    noiseLevel: 0,
-    signalToNoise: 0,
-    quality: 'poor',
-    bitrate: 0,
-    latency: 0
-  };
+  private metricsUpdateInterval: number | null = null;
 
-  private config: AudioConfig = {
-    sampleRate: 48000,
-    channelCount: 1,
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    latency: 0.02 // 20ms target latency
-  };
-
-  constructor(config?: Partial<AudioConfig>) {
+  constructor() {
     super();
-    if (config) {
-      this.config = { ...this.config, ...config };
-    }
-    this.initialize();
   }
 
-  private async initialize() {
-    try {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: this.config.sampleRate,
-        latencyHint: this.config.latency
-      });
-
-      // Resume audio context if suspended
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
-      this.emit('initialized');
-    } catch (error) {
-      console.error('Audio initialization failed:', error);
-      this.emit('error', error);
-    }
-  }
-
-  async startRecording(): Promise<boolean> {
-    if (!this.audioContext || this.isRecording) return false;
+  async initialize(): Promise<void> {
+    if (this.isInitialized) return;
 
     try {
-      // Get user media with optimized constraints
+      // Create audio context
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // Get user media with high-quality constraints
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: this.config.sampleRate,
-          channelCount: this.config.channelCount,
-          echoCancellation: this.config.echoCancellation,
-          noiseSuppression: this.config.noiseSuppression,
-          autoGainControl: this.config.autoGainControl,
-          latency: this.config.latency
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1
         }
       });
 
-      // Create audio processing chain
-      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+      // Set up audio processing
+      await this.setupAudioProcessing();
       
-      // Add analyser for real-time audio metrics
-      this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 2048;
-      this.analyser.smoothingTimeConstant = 0.8;
+      this.isInitialized = true;
+      this.emit('initialized');
+      
+      console.log('Audio manager initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize audio manager:', error);
+      this.emit('error', error);
+      throw error;
+    }
+  }
 
-      // Add gain control
-      this.gainNode = this.audioContext.createGain();
-      this.gainNode.gain.value = 1.0;
+  private async setupAudioProcessing(): Promise<void> {
+    if (!this.audioContext || !this.mediaStream) return;
 
-      // Add compressor for dynamic range control
-      this.compressor = this.audioContext.createDynamicsCompressor();
-      this.compressor.threshold.value = -24;
-      this.compressor.knee.value = 30;
-      this.compressor.ratio.value = 12;
-      this.compressor.attack.value = 0.003;
-      this.compressor.release.value = 0.25;
+    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+    
+    // Create analyser for metrics
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.analyser.smoothingTimeConstant = 0.8;
+    
+    // Create gain node for volume control
+    this.gainNode = this.audioContext.createGain();
+    this.gainNode.gain.value = 1.0;
+    
+    // Connect audio nodes
+    source.connect(this.analyser);
+    this.analyser.connect(this.gainNode);
+    
+    // Start metrics monitoring
+    this.startMetricsMonitoring();
+  }
 
-      // Connect processing chain
-      source.connect(this.gainNode);
-      this.gainNode.connect(this.compressor);
-      this.compressor.connect(this.analyser);
+  async startRecording(): Promise<boolean> {
+    if (!this.isInitialized || !this.mediaStream) {
+      throw new Error('Audio manager not initialized');
+    }
 
-      // Start media recorder with optimized settings
+    try {
+      this.audioChunks = [];
+      
       this.mediaRecorder = new MediaRecorder(this.mediaStream, {
-        mimeType: this.getSupportedMimeType(),
-        audioBitsPerSecond: 64000 // Optimize for voice
+        mimeType: 'audio/webm;codecs=opus'
       });
 
-      this.setupMediaRecorderEvents();
-      this.mediaRecorder.start(100); // Capture every 100ms for real-time transmission
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          this.audioChunks.push(event.data);
+          this.emit('audio-chunk', event.data);
+        }
+      };
 
+      this.mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm;codecs=opus' });
+        this.emit('recording-stopped', audioBlob);
+      };
+
+      this.mediaRecorder.start(100); // 100ms chunks for real-time transmission
       this.isRecording = true;
-      this.startMetricsMonitoring();
-      
       this.emit('recording-started');
+      
       return true;
-
     } catch (error) {
       console.error('Failed to start recording:', error);
       this.emit('error', error);
@@ -141,187 +117,151 @@ export class AudioManager extends EventEmitter {
   }
 
   async stopRecording(): Promise<Blob | null> {
-    if (!this.isRecording || !this.mediaRecorder) return null;
+    if (!this.mediaRecorder || !this.isRecording) {
+      return null;
+    }
 
     return new Promise((resolve) => {
       this.mediaRecorder!.onstop = () => {
-        const audioBlob = new Blob(this.audioChunks, { 
-          type: this.getSupportedMimeType() 
-        });
-        this.audioChunks = [];
+        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm;codecs=opus' });
+        this.isRecording = false;
         resolve(audioBlob);
       };
-
+      
       this.mediaRecorder!.stop();
-      this.cleanup();
-      this.isRecording = false;
-      this.emit('recording-stopped');
     });
   }
 
   async playAudio(audioData: ArrayBuffer | Blob): Promise<void> {
-    if (!this.audioContext || this.isPlaying) return;
+    if (!this.audioContext) {
+      throw new Error('Audio context not initialized');
+    }
 
     try {
-      this.isPlaying = true;
-      this.emit('playback-started');
-
       let arrayBuffer: ArrayBuffer;
+      
       if (audioData instanceof Blob) {
         arrayBuffer = await audioData.arrayBuffer();
       } else {
         arrayBuffer = audioData;
       }
 
-      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+      const decodedAudio = await this.audioContext.decodeAudioData(arrayBuffer);
       const source = this.audioContext.createBufferSource();
-      const outputGain = this.audioContext.createGain();
+      source.buffer = decodedAudio;
+      
+      if (this.gainNode) {
+        source.connect(this.gainNode);
+        this.gainNode.connect(this.audioContext.destination);
+      } else {
+        source.connect(this.audioContext.destination);
+      }
 
-      source.buffer = audioBuffer;
-      source.connect(outputGain);
-      outputGain.connect(this.audioContext.destination);
-
-      // Set output volume
-      outputGain.gain.value = 0.8;
-
+      this.emit('playback-started');
+      
       source.onended = () => {
-        this.isPlaying = false;
         this.emit('playback-ended');
       };
-
+      
       source.start();
-
     } catch (error) {
-      console.error('Audio playback failed:', error);
-      this.isPlaying = false;
+      console.error('Failed to play audio:', error);
       this.emit('error', error);
+      throw error;
     }
   }
 
-  private setupMediaRecorderEvents() {
-    if (!this.mediaRecorder) return;
-
-    this.mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        this.audioChunks.push(event.data);
-        this.emit('audio-chunk', event.data);
-      }
-    };
-
-    this.mediaRecorder.onerror = (error) => {
-      console.error('MediaRecorder error:', error);
-      this.emit('error', error);
-    };
-  }
-
-  private startMetricsMonitoring() {
-    if (!this.analyser) return;
-
-    const bufferLength = this.analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    const timeDataArray = new Uint8Array(bufferLength);
-
-    const updateMetrics = () => {
-      if (!this.isRecording || !this.analyser) return;
-
-      this.analyser.getByteFrequencyData(dataArray);
-      this.analyser.getByteTimeDomainData(timeDataArray);
-
-      // Calculate input level (RMS)
-      let sum = 0;
-      for (let i = 0; i < timeDataArray.length; i++) {
-        const normalized = (timeDataArray[i] - 128) / 128;
-        sum += normalized * normalized;
-      }
-      const rms = Math.sqrt(sum / timeDataArray.length);
-      this.metrics.inputLevel = Math.round(rms * 100);
-
-      // Calculate noise level and signal-to-noise ratio
-      const noiseFloor = Math.min(...Array.from(dataArray));
-      const signalPeak = Math.max(...Array.from(dataArray));
-      this.metrics.noiseLevel = noiseFloor;
-      this.metrics.signalToNoise = signalPeak - noiseFloor;
-
-      // Determine quality based on metrics
-      if (this.metrics.signalToNoise > 40) {
-        this.metrics.quality = 'excellent';
-      } else if (this.metrics.signalToNoise > 25) {
-        this.metrics.quality = 'good';
-      } else if (this.metrics.signalToNoise > 15) {
-        this.metrics.quality = 'fair';
-      } else {
-        this.metrics.quality = 'poor';
-      }
-
-      this.emit('metrics-updated', this.metrics);
-      requestAnimationFrame(updateMetrics);
-    };
-
-    updateMetrics();
-  }
-
-  private getSupportedMimeType(): string {
-    const types = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/mp4',
-      'audio/mpeg'
-    ];
-
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        return type;
-      }
-    }
-
-    return 'audio/webm';
-  }
-
-  private cleanup() {
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
-    }
-
-    if (this.analyser) {
-      this.analyser.disconnect();
-      this.analyser = null;
-    }
-
-    if (this.gainNode) {
-      this.gainNode.disconnect();
-      this.gainNode = null;
-    }
-
-    if (this.compressor) {
-      this.compressor.disconnect();
-      this.compressor = null;
-    }
-  }
-
-  setVolume(volume: number) {
+  setVolume(volume: number): void {
     if (this.gainNode) {
       this.gainNode.gain.value = Math.max(0, Math.min(1, volume));
     }
   }
 
-  getMetrics(): AudioMetrics {
-    return { ...this.metrics };
-  }
-
-  isCurrentlyRecording(): boolean {
-    return this.isRecording;
-  }
-
-  isCurrentlyPlaying(): boolean {
-    return this.isPlaying;
-  }
-
-  async destroy() {
-    this.cleanup();
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      await this.audioContext.close();
+  private startMetricsMonitoring(): void {
+    if (this.metricsUpdateInterval) {
+      clearInterval(this.metricsUpdateInterval);
     }
+
+    this.metricsUpdateInterval = window.setInterval(() => {
+      if (this.analyser) {
+        const metrics = this.calculateMetrics();
+        this.emit('metrics-updated', metrics);
+      }
+    }, 100);
+  }
+
+  private calculateMetrics(): AudioMetrics {
+    if (!this.analyser) {
+      return {
+        inputLevel: 0,
+        outputLevel: 0,
+        noiseLevel: 0,
+        signalToNoise: 0,
+        quality: 'poor',
+        bitrate: 0,
+        latency: 0
+      };
+    }
+
+    const bufferLength = this.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    this.analyser.getByteFrequencyData(dataArray);
+
+    // Calculate RMS level
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) {
+      sum += dataArray[i] * dataArray[i];
+    }
+    const rms = Math.sqrt(sum / bufferLength);
+    const inputLevel = Math.round((rms / 255) * 100);
+
+    // Estimate noise floor (lowest 10% of frequencies)
+    const sortedData = Array.from(dataArray).sort((a, b) => a - b);
+    const noiseFloor = sortedData.slice(0, Math.floor(bufferLength * 0.1))
+      .reduce((sum, val) => sum + val, 0) / (bufferLength * 0.1);
+    const noiseLevel = Math.round((noiseFloor / 255) * 100);
+
+    // Calculate signal-to-noise ratio
+    const signalToNoise = inputLevel > 0 ? Math.round(20 * Math.log10(inputLevel / Math.max(noiseLevel, 1))) : 0;
+
+    // Determine quality based on S/N ratio and input level
+    let quality: 'excellent' | 'good' | 'fair' | 'poor' = 'poor';
+    if (signalToNoise > 40 && inputLevel > 30) quality = 'excellent';
+    else if (signalToNoise > 25 && inputLevel > 20) quality = 'good';
+    else if (signalToNoise > 15 && inputLevel > 10) quality = 'fair';
+
+    return {
+      inputLevel,
+      outputLevel: inputLevel, // Simplified - same as input for now
+      noiseLevel,
+      signalToNoise,
+      quality,
+      bitrate: 64000, // Opus codec estimate
+      latency: this.audioContext ? Math.round(this.audioContext.baseLatency * 1000) : 0
+    };
+  }
+
+  async destroy(): Promise<void> {
+    if (this.metricsUpdateInterval) {
+      clearInterval(this.metricsUpdateInterval);
+      this.metricsUpdateInterval = null;
+    }
+
+    if (this.mediaRecorder && this.isRecording) {
+      this.mediaRecorder.stop();
+    }
+
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.stop());
+      this.mediaStream = null;
+    }
+
+    if (this.audioContext) {
+      await this.audioContext.close();
+      this.audioContext = null;
+    }
+
+    this.isInitialized = false;
     this.removeAllListeners();
   }
 }

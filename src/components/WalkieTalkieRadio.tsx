@@ -5,7 +5,8 @@ import {
   Settings, 
   Antenna,
   WifiOff,
-  Wifi
+  Wifi,
+  Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RadioControls } from './radio/RadioControls';
@@ -14,6 +15,7 @@ import { StatusDisplay } from './radio/StatusDisplay';
 import { EnhancedPTTButton } from './radio/EnhancedPTTButton';
 import { AudioMetrics } from './radio/AudioMetrics';
 import { SettingsPanel } from './radio/SettingsPanel';
+import { SecurePairing } from './radio/SecurePairing';
 import { Settings as AdvancedSettings } from '../pages/Settings';
 import { useUnifiedRadioMesh } from '../hooks/useUnifiedRadioMesh';
 import { unifiedMeshService } from '../services/UnifiedMeshService';
@@ -30,6 +32,8 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
   const [squelch, setSquelch] = useState(3);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [showSecurePairing, setShowSecurePairing] = useState(false);
+  const [pairedDevices, setPairedDevices] = useState([]);
   
   const { 
     isConnected, 
@@ -51,6 +55,7 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
     if (isPoweredOn) {
       setIsSettingsOpen(false);
       setShowAdvancedSettings(false);
+      setShowSecurePairing(false);
     }
   };
 
@@ -60,6 +65,39 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
       unifiedMeshService.setVolume(volume);
     }
   }, [volume, isPoweredOn]);
+
+  // Update paired devices list
+  useEffect(() => {
+    if (isPoweredOn) {
+      const updatePairedDevices = () => {
+        setPairedDevices(unifiedMeshService.getPairedDevices());
+      };
+      
+      updatePairedDevices();
+      const interval = setInterval(updatePairedDevices, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [isPoweredOn]);
+
+  const handleGeneratePairingCode = async () => {
+    return await unifiedMeshService.generatePairingCode();
+  };
+
+  const handleProcessPairingCode = async (code: string) => {
+    return await unifiedMeshService.processPairingCode(code);
+  };
+
+  const handleVerifyPairing = async (deviceId: string, code: string) => {
+    return await unifiedMeshService.verifyPairing(deviceId, code);
+  };
+
+  const handleRemovePairing = (deviceId: string) => {
+    unifiedMeshService.removePairing(deviceId);
+  };
+
+  const handleRotateKeys = async () => {
+    await unifiedMeshService.rotateKeys();
+  };
 
   if (!isOpen) return null;
 
@@ -91,6 +129,9 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                 <div className={`text-xs font-mono ${isPoweredOn ? 'text-green-400' : 'text-gray-500'}`}>
                   CH {channel.toString().padStart(2, '0')}
                 </div>
+                {isPoweredOn && pairedDevices.filter(d => d.verified).length > 0 && (
+                  <Shield className="w-4 h-4 text-blue-400" title="Encrypted" />
+                )}
               </div>
               <StatusDisplay 
                 isPoweredOn={isPoweredOn}
@@ -114,6 +155,9 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                     <span>MESH RADIO</span>
                     <div className="flex items-center space-x-1">
                       {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                      {pairedDevices.filter(d => d.verified).length > 0 && (
+                        <Shield className="w-3 h-3 text-blue-400" />
+                      )}
                     </div>
                   </div>
                   <div className="text-green-300 text-xs font-mono">
@@ -136,6 +180,11 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                       BT: {isBluetoothEnabled ? 'ON' : 'OFF'}
                     </span>
                   </div>
+                  {pairedDevices.filter(d => d.verified).length > 0 && (
+                    <div className="text-blue-400 text-xs font-mono">
+                      ENCRYPTED: {pairedDevices.filter(d => d.verified).length} DEVICES
+                    </div>
+                  )}
                   {isReceiving && (
                     <motion.div
                       animate={{ opacity: [1, 0.5, 1] }}
@@ -194,11 +243,23 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
                 </button>
 
                 <button
-                  onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                  onClick={() => setShowSecurePairing(!showSecurePairing)}
                   disabled={!isPoweredOn}
                   className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
                     isPoweredOn 
                       ? 'bg-blue-700 border-blue-500 hover:bg-blue-600 text-white' 
+                      : 'bg-gray-800 border-gray-700 text-gray-500'
+                  }`}
+                >
+                  <Shield className="w-5 h-5" />
+                </button>
+
+                <button
+                  onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                  disabled={!isPoweredOn}
+                  className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
+                    isPoweredOn 
+                      ? 'bg-purple-700 border-purple-500 hover:bg-purple-600 text-white' 
                       : 'bg-gray-800 border-gray-700 text-gray-500'
                   }`}
                 >
@@ -251,6 +312,21 @@ export const WalkieTalkieRadio: React.FC<WalkieTalkieRadioProps> = ({ isOpen, on
               onClose={() => setIsSettingsOpen(false)}
               messages={messages}
               onSendMessage={sendMessage}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Secure Pairing Modal */}
+        <AnimatePresence>
+          {showSecurePairing && isPoweredOn && (
+            <SecurePairing
+              onClose={() => setShowSecurePairing(false)}
+              pairedDevices={pairedDevices}
+              onGeneratePairingCode={handleGeneratePairingCode}
+              onProcessPairingCode={handleProcessPairingCode}
+              onVerifyPairing={handleVerifyPairing}
+              onRemovePairing={handleRemovePairing}
+              onRotateKeys={handleRotateKeys}
             />
           )}
         </AnimatePresence>
