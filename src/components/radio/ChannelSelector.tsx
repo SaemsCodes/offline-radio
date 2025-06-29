@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface ChannelSelectorProps {
   currentChannel: number;
@@ -26,43 +27,45 @@ export const ChannelSelector: React.FC<ChannelSelectorProps> = ({
   };
 
   return (
-    <div className="flex items-center justify-center space-x-4">
-      <button
-        onClick={decrementChannel}
-        disabled={!disabled || currentChannel <= 1}
-        className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
-          disabled && currentChannel > 1
-            ? 'bg-gray-700 border-gray-500 hover:bg-gray-600 text-white'
-            : 'bg-gray-800 border-gray-700 text-gray-500 cursor-not-allowed'
+    <div className="flex flex-col items-center space-y-2">
+      <motion.button
+        onClick={incrementChannel}
+        disabled={disabled || currentChannel >= 99}
+        className={`w-12 h-8 rounded border-2 flex items-center justify-center transition-all font-bold ${
+          disabled && currentChannel < 99
+            ? 'bg-gray-800 border-orange-500 hover:bg-gray-700 text-orange-400 shadow-md'
+            : 'bg-gray-900 border-gray-600 text-gray-500 cursor-not-allowed'
         }`}
+        whileTap={disabled && currentChannel < 99 ? { scale: 0.95 } : {}}
       >
-        <ChevronDown className="w-5 h-5" />
-      </button>
+        <ChevronUp className="w-5 h-5" />
+      </motion.button>
 
-      <div className={`flex flex-col items-center space-y-1 px-4 py-2 rounded-lg border ${
+      <div className={`flex flex-col items-center space-y-1 px-3 py-2 rounded border-2 bg-black ${
         disabled 
-          ? 'bg-gray-700 border-gray-500' 
-          : 'bg-gray-800 border-gray-700'
+          ? 'border-orange-500 shadow-inner' 
+          : 'border-gray-700'
       }`}>
-        <span className={`text-xs font-mono ${disabled ? 'text-orange-400' : 'text-gray-500'}`}>
-          CHANNEL
+        <span className={`text-xs font-mono font-bold ${disabled ? 'text-orange-400' : 'text-gray-500'}`}>
+          CHAN
         </span>
-        <span className={`text-2xl font-mono font-bold ${disabled ? 'text-white' : 'text-gray-500'}`}>
+        <span className={`text-xl font-mono font-bold leading-none ${disabled ? 'text-green-400' : 'text-gray-500'}`}>
           {currentChannel.toString().padStart(2, '0')}
         </span>
       </div>
 
-      <button
-        onClick={incrementChannel}
-        disabled={!disabled || currentChannel >= 99}
-        className={`w-10 h-10 rounded-lg border flex items-center justify-center transition-all ${
-          disabled && currentChannel < 99
-            ? 'bg-gray-700 border-gray-500 hover:bg-gray-600 text-white'
-            : 'bg-gray-800 border-gray-700 text-gray-500 cursor-not-allowed'
+      <motion.button
+        onClick={decrementChannel}
+        disabled={disabled || currentChannel <= 1}
+        className={`w-12 h-8 rounded border-2 flex items-center justify-center transition-all font-bold ${
+          disabled && currentChannel > 1
+            ? 'bg-gray-800 border-orange-500 hover:bg-gray-700 text-orange-400 shadow-md'
+            : 'bg-gray-900 border-gray-600 text-gray-500 cursor-not-allowed'
         }`}
+        whileTap={disabled && currentChannel > 1 ? { scale: 0.95 } : {}}
       >
-        <ChevronUp className="w-5 h-5" />
-      </button>
+        <ChevronDown className="w-5 h-5" />
+      </motion.button>
     </div>
   );
 };

@@ -6,11 +6,12 @@ import { useRadioState } from '../../hooks/useRadioState';
 import { useUnifiedRadioMesh } from '../../hooks/useUnifiedRadioMesh';
 import { RadialDial } from './RadialDial';
 import { ChannelDisplay } from './ChannelDisplay';
+import { ChannelSelector } from './ChannelSelector';
 import { EnhancedPTTButton } from './EnhancedPTTButton';
 import { SignalMeter } from './SignalMeter';
 import { BatteryIndicator } from './BatteryIndicator';
 import { NetworkTopologyVisualization } from './NetworkTopologyVisualization';
-import { SettingsPanel } from './SettingsPanel';
+import { EnhancedSettingsPanel } from './EnhancedSettingsPanel';
 import { SecurePairing } from './SecurePairing';
 
 interface AuthenticRadioUIProps {
@@ -60,62 +61,79 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
     }
   };
 
+  const handleFactoryReset = () => {
+    // Reset all radio state to defaults
+    changeChannel(1);
+    adjustVolume(5);
+    adjustSquelch(3);
+    setEncryptionEnabled(false);
+    // Clear any stored data
+    localStorage.removeItem('orad-radio-settings');
+    console.log('Factory reset completed');
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4">
       <div className="relative w-full max-w-sm">
-        {/* Main Radio Body */}
-        <div className="bg-gradient-to-b from-gray-900 via-gray-800 to-black rounded-3xl border-4 border-gray-600 shadow-2xl p-6">
+        {/* Main Radio Body - Military Grade Styling */}
+        <div className="bg-gradient-to-b from-gray-900 via-gray-800 to-black rounded-2xl border-4 border-gray-600 shadow-2xl p-6 relative">
+          {/* Tactical Corner Details */}
+          <div className="absolute top-2 left-2 w-3 h-3 border-l-2 border-t-2 border-orange-500"></div>
+          <div className="absolute top-2 right-2 w-3 h-3 border-r-2 border-t-2 border-orange-500"></div>
+          <div className="absolute bottom-2 left-2 w-3 h-3 border-l-2 border-b-2 border-orange-500"></div>
+          <div className="absolute bottom-2 right-2 w-3 h-3 border-r-2 border-b-2 border-orange-500"></div>
+
           {/* Top Control Bar */}
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 bg-black/50 rounded-lg p-2 border border-gray-700">
             <div className="flex items-center gap-2">
               <RadioIcon className={`w-5 h-5 ${radioState.isPoweredOn ? 'text-green-400' : 'text-gray-500'}`} />
-              <span className="text-orange-400 font-mono text-sm font-bold">ORAD MESH</span>
+              <span className="text-orange-400 font-mono text-sm font-bold tracking-wider">ORAD-MK1</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <button
                 onClick={() => setShowTopology(true)}
-                className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
+                className="w-7 h-7 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
                 disabled={!radioState.isPoweredOn}
               >
                 {isConnected ? (
-                  <Wifi className="w-4 h-4 text-green-400" />
+                  <Wifi className="w-3 h-3 text-green-400" />
                 ) : (
-                  <WifiOff className="w-4 h-4 text-gray-500" />
+                  <WifiOff className="w-3 h-3 text-gray-500" />
                 )}
               </button>
               <button
                 onClick={() => setShowPairing(true)}
-                className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
+                className="w-7 h-7 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
                 disabled={!radioState.isPoweredOn}
               >
-                <Shield className="w-4 h-4 text-blue-400" />
+                <Shield className="w-3 h-3 text-blue-400" />
               </button>
               <button
                 onClick={() => setShowSettings(true)}
-                className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
+                className="w-7 h-7 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
               >
-                <Settings className="w-4 h-4 text-white" />
+                <Settings className="w-3 h-3 text-white" />
               </button>
               <button
                 onClick={onClose}
-                className="w-8 h-8 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center transition-colors"
+                className="w-7 h-7 bg-red-700 hover:bg-red-600 rounded border border-red-500 flex items-center justify-center transition-colors"
               >
-                <X className="w-4 h-4 text-white" />
+                <X className="w-3 h-3 text-white" />
               </button>
             </div>
           </div>
 
           {/* Status Indicators */}
-          <div className="flex items-center justify-between mb-6 bg-black/50 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-6 bg-black/70 rounded-lg p-3 border border-gray-700">
             <BatteryIndicator level={radioState.batteryLevel} isPoweredOn={radioState.isPoweredOn} />
             <SignalMeter strength={radioState.signalStrength} isPoweredOn={radioState.isPoweredOn} />
             <div className="flex flex-col items-center">
-              <div className={`text-xs ${radioState.isPoweredOn ? 'text-blue-400' : 'text-gray-500'}`}>
-                PEERS
+              <div className={`text-xs font-mono ${radioState.isPoweredOn ? 'text-blue-400' : 'text-gray-500'}`}>
+                MESH
               </div>
-              <div className={`text-sm font-bold ${radioState.isPoweredOn ? 'text-white' : 'text-gray-500'}`}>
+              <div className={`text-sm font-bold font-mono ${radioState.isPoweredOn ? 'text-white' : 'text-gray-500'}`}>
                 {radioState.isPoweredOn ? peerCount : '--'}
               </div>
             </div>
@@ -131,16 +149,12 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
             />
           </div>
 
-          {/* Control Dials */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <RadialDial
-              value={radioState.channel}
-              min={1}
-              max={99}
-              onChange={changeChannel}
-              disabled={!radioState.isPoweredOn}
-              label="CH"
-              color="orange"
+          {/* Channel Selector and Control Dials */}
+          <div className="grid grid-cols-4 gap-3 mb-6">
+            <ChannelSelector
+              currentChannel={radioState.channel}
+              onChannelChange={changeChannel}
+              disabled={radioState.isPoweredOn}
             />
             <RadialDial
               value={radioState.volume}
@@ -160,20 +174,34 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
               label="SQL"
               color="blue"
             />
+            <div className="flex flex-col items-center justify-center">
+              <div className={`text-xs font-mono mb-1 ${radioState.isPoweredOn ? 'text-gray-300' : 'text-gray-500'}`}>
+                MODE
+              </div>
+              <div className={`text-xs font-mono font-bold ${
+                encryptionEnabled && radioState.isPoweredOn ? 'text-green-400' : 
+                radioState.isPoweredOn ? 'text-white' : 'text-gray-500'
+              }`}>
+                {encryptionEnabled && radioState.isPoweredOn ? 'SEC' : 'CLR'}
+              </div>
+            </div>
           </div>
 
           {/* Power Button */}
           <div className="flex justify-center mb-6">
             <motion.button
               onClick={powerToggle}
-              className={`w-16 h-16 rounded-full font-bold text-lg transition-all duration-300 shadow-lg ${
+              className={`w-20 h-20 rounded-full font-bold text-lg transition-all duration-300 shadow-lg border-4 ${
                 radioState.isPoweredOn
-                  ? 'bg-green-600 hover:bg-green-700 text-white shadow-green-600/50 ring-2 ring-green-400/50'
-                  : 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/50'
+                  ? 'bg-green-700 hover:bg-green-600 text-white border-green-500 shadow-green-600/50 ring-2 ring-green-400/30'
+                  : 'bg-red-700 hover:bg-red-600 text-white border-red-500 shadow-red-600/50'
               }`}
               whileTap={{ scale: 0.95 }}
             >
-              PWR
+              <div className="font-mono font-bold">PWR</div>
+              <div className="text-xs font-mono">
+                {radioState.isPoweredOn ? 'ON' : 'OFF'}
+              </div>
             </motion.button>
           </div>
 
@@ -193,46 +221,49 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
             <motion.button
               onClick={toggleEmergencyMode}
               disabled={!radioState.isPoweredOn}
-              className={`px-6 py-2 rounded-lg font-bold text-sm transition-all ${
+              className={`px-8 py-3 rounded-lg font-bold text-sm transition-all border-2 font-mono ${
                 radioState.emergencyMode
-                  ? 'bg-red-600 text-white animate-pulse'
+                  ? 'bg-red-700 text-white animate-pulse border-red-500'
                   : radioState.isPoweredOn
-                  ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                  : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                  ? 'bg-orange-700 hover:bg-orange-600 text-white border-orange-500'
+                  : 'bg-gray-800 text-gray-500 cursor-not-allowed border-gray-600'
               }`}
               whileTap={radioState.isPoweredOn ? { scale: 0.95 } : {}}
             >
-              <Zap className="w-4 h-4 inline mr-1" />
+              <Zap className="w-4 h-4 inline mr-2" />
               {radioState.emergencyMode ? 'EMERGENCY ACTIVE' : 'EMERGENCY'}
             </motion.button>
           </div>
 
-          {/* Audio Quality Indicator */}
-          {radioState.isPoweredOn && audioMetrics && (
-            <div className="bg-black/30 rounded-lg p-2 mb-4">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-gray-400">AUDIO:</span>
-                <span className={`font-semibold ${
-                  audioMetrics.quality === 'excellent' ? 'text-green-400' :
-                  audioMetrics.quality === 'good' ? 'text-yellow-400' :
-                  audioMetrics.quality === 'fair' ? 'text-orange-400' : 'text-red-400'
-                }`}>
-                  {audioMetrics.quality.toUpperCase()}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-gray-400">S/N:</span>
-                <span className="text-gray-300">{audioMetrics.signalToNoise}dB</span>
-              </div>
-            </div>
-          )}
+          {/* Audio Quality and Status Indicators */}
+          {radioState.isPoweredOn && (
+            <div className="space-y-2">
+              {audioMetrics && (
+                <div className="bg-black/50 rounded-lg p-2 border border-gray-700">
+                  <div className="flex justify-between items-center text-xs font-mono">
+                    <span className="text-gray-400">AUDIO:</span>
+                    <span className={`font-bold ${
+                      audioMetrics.quality === 'excellent' ? 'text-green-400' :
+                      audioMetrics.quality === 'good' ? 'text-yellow-400' :
+                      audioMetrics.quality === 'fair' ? 'text-orange-400' : 'text-red-400'
+                    }`}>
+                      {audioMetrics.quality.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs font-mono">
+                    <span className="text-gray-400">S/N:</span>
+                    <span className="text-gray-300">{audioMetrics.signalToNoise}dB</span>
+                  </div>
+                </div>
+              )}
 
-          {/* Message Activity */}
-          {radioState.isPoweredOn && messages.length > 0 && (
-            <div className="bg-black/30 rounded-lg p-2">
-              <div className="text-xs text-green-400 font-mono">
-                LAST: {messages[messages.length - 1]?.payload?.content || 'Signal received'}
-              </div>
+              {messages.length > 0 && (
+                <div className="bg-black/50 rounded-lg p-2 border border-gray-700">
+                  <div className="text-xs text-green-400 font-mono">
+                    LAST RX: {messages[messages.length - 1]?.payload?.content || 'Signal received'}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -240,7 +271,7 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           {audioError && (
             <div className="bg-red-900/50 border border-red-500 rounded-lg p-2 mb-4">
               <div className="flex items-center justify-between">
-                <span className="text-red-400 text-xs">{audioError}</span>
+                <span className="text-red-400 text-xs font-mono">{audioError}</span>
                 <button
                   onClick={clearAudioError}
                   className="text-red-400 hover:text-red-300 text-xs"
@@ -261,13 +292,14 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
         )}
 
         {showSettings && (
-          <SettingsPanel
+          <EnhancedSettingsPanel
             isVisible={showSettings}
             onClose={() => setShowSettings(false)}
             volume={radioState.volume}
             onVolumeChange={adjustVolume}
             encryptionEnabled={encryptionEnabled}
             onEncryptionToggle={setEncryptionEnabled}
+            onFactoryReset={handleFactoryReset}
           />
         )}
 

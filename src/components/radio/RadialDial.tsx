@@ -27,9 +27,9 @@ export const RadialDial: React.FC<RadialDialProps> = ({
   const startValueRef = useRef(value);
 
   const colorClasses = {
-    orange: 'border-orange-400 bg-orange-400/20',
-    green: 'border-green-400 bg-green-400/20',
-    blue: 'border-blue-400 bg-blue-400/20'
+    orange: 'border-orange-400 bg-orange-400/10 shadow-orange-400/20',
+    green: 'border-green-400 bg-green-400/10 shadow-green-400/20',
+    blue: 'border-blue-400 bg-blue-400/10 shadow-blue-400/20'
   };
 
   const indicatorColors = {
@@ -148,70 +148,76 @@ export const RadialDial: React.FC<RadialDialProps> = ({
     <div className="flex flex-col items-center">
       <div
         ref={dialRef}
-        className={`relative w-16 h-16 rounded-full border-4 cursor-grab active:cursor-grabbing select-none ${
+        className={`relative w-16 h-16 rounded-full border-4 cursor-grab active:cursor-grabbing select-none shadow-lg transition-all ${
           disabled 
-            ? 'border-gray-600 bg-gray-800/20' 
+            ? 'border-gray-600 bg-gray-800/30 shadow-none' 
             : colorClasses[color]
-        } ${isDragging ? 'scale-105' : ''}`}
+        } ${isDragging ? 'scale-110 shadow-xl' : ''}`}
         onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         style={{ 
-          transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+          transition: isDragging ? 'none' : 'all 0.2s ease-out',
           touchAction: 'none'
         }}
       >
-        {/* Dial notches */}
-        {Array.from({ length: 11 }, (_, i) => {
-          const angle = (i / 10) * 270 - 135;
-          const isActive = i <= ((value - min) / (max - min)) * 10;
+        {/* Enhanced Dial Markings */}
+        {Array.from({ length: 21 }, (_, i) => {
+          const angle = (i / 20) * 270 - 135;
+          const isMajor = i % 5 === 0;
+          const isActive = i <= ((value - min) / (max - min)) * 20;
           return (
             <div
               key={i}
-              className={`absolute w-1 h-2 ${
+              className={`absolute ${isMajor ? 'w-1 h-3' : 'w-0.5 h-2'} ${
                 disabled 
                   ? 'bg-gray-600' 
                   : isActive 
                   ? indicatorColors[color] 
                   : 'bg-gray-600'
-              }`}
+              } ${isMajor ? 'shadow-sm' : ''}`}
               style={{
-                top: '4px',
+                top: isMajor ? '2px' : '3px',
                 left: '50%',
-                transformOrigin: 'center 28px',
+                transformOrigin: `center ${isMajor ? '30px' : '29px'}`,
                 transform: `translateX(-50%) rotate(${angle}deg)`
               }}
             />
           );
         })}
         
-        {/* Center indicator */}
+        {/* Enhanced Center Indicator */}
         <motion.div
-          className={`absolute w-1 h-6 ${disabled ? 'bg-gray-500' : indicatorColors[color]} rounded-full`}
+          className={`absolute w-1.5 h-7 ${disabled ? 'bg-gray-500' : indicatorColors[color]} rounded-full shadow-md`}
           style={{
-            top: '8px',
+            top: '6px',
             left: '50%',
-            transformOrigin: 'center 24px',
+            transformOrigin: 'center 26px',
             transform: `translateX(-50%) rotate(${currentAngle}deg)`
           }}
           animate={{ rotate: currentAngle }}
-          transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 25 }}
         />
         
-        {/* Center dot */}
-        <div className={`absolute w-2 h-2 rounded-full top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${
-          disabled ? 'bg-gray-600' : indicatorColors[color]
-        }`} />
+        {/* Enhanced Center Hub */}
+        <div className={`absolute w-4 h-4 rounded-full top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 border-2 ${
+          disabled 
+            ? 'bg-gray-700 border-gray-600' 
+            : `bg-gray-900 ${color === 'orange' ? 'border-orange-400' : color === 'green' ? 'border-green-400' : 'border-blue-400'}`
+        } shadow-inner`} />
+        
+        {/* Tactical Texture Overlay */}
+        <div className="absolute inset-1 rounded-full bg-gradient-to-br from-transparent via-white/5 to-transparent pointer-events-none" />
       </div>
       
-      {/* Label and Value */}
-      <div className="mt-2 text-center">
-        <div className={`text-xs font-mono ${disabled ? 'text-gray-500' : 'text-gray-300'}`}>
+      {/* Enhanced Label and Value Display */}
+      <div className="mt-3 text-center bg-black/50 rounded px-2 py-1 border border-gray-700">
+        <div className={`text-xs font-mono font-bold ${disabled ? 'text-gray-500' : color === 'orange' ? 'text-orange-400' : color === 'green' ? 'text-green-400' : 'text-blue-400'}`}>
           {label}
         </div>
-        <div className={`text-sm font-bold ${disabled ? 'text-gray-500' : 'text-white'}`}>
-          {value}
+        <div className={`text-sm font-bold font-mono ${disabled ? 'text-gray-500' : 'text-white'}`}>
+          {value.toString().padStart(2, '0')}
         </div>
       </div>
     </div>
