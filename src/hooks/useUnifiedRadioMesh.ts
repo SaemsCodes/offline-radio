@@ -34,10 +34,24 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
   const [isReceiving, setIsReceiving] = useState(false);
 
   const { 
-    playAudio, 
-    metrics: audioMetrics, 
-    isInitialized: audioInitialized 
+    isInitialized,
+    isRecording,
+    error: audioError,
+    metrics: audioMetrics,
+    initialize,
+    startRecording,
+    stopRecording,
+    playAudio,
+    setAudioChunkHandler,
+    clearError
   } = useAudioManager();
+
+  // Initialize audio when powered on
+  useEffect(() => {
+    if (isPoweredOn && !isInitialized) {
+      initialize();
+    }
+  }, [isPoweredOn, isInitialized, initialize]);
 
   // Update channel when it changes
   useEffect(() => {
@@ -93,6 +107,16 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
     return unsubscribe;
   }, [isPoweredOn, channel, playAudio]);
 
+  // Set up real-time audio chunk handler
+  useEffect(() => {
+    setAudioChunkHandler(async (chunk: Blob) => {
+      if (isTransmitting && isPoweredOn) {
+        const arrayBuffer = await chunk.arrayBuffer();
+        await unifiedMeshService.transmitVoice(arrayBuffer);
+      }
+    });
+  }, [isTransmitting, isPoweredOn, setAudioChunkHandler]);
+
   const getTextFromTransmission = (transmission: ChannelTransmission): string => {
     try {
       if (typeof transmission.content === 'string') {
@@ -131,14 +155,24 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
     }
   }, [isPoweredOn, deviceStatus.signalQuality, channel]);
 
-  const handleAudioData = useCallback(async (audioData: Blob) => {
-    if (!isPoweredOn || deviceStatus.signalQuality === 'none') {
-      console.warn('Cannot transmit audio: radio off or no signal');
-      return;
+  const handlePTTPress = useCallback(async () => {
+    if (!isPoweredOn || !isInitialized) return;
+    
+    setIsTransmitting(true);
+    const success = await startRecording();
+    if (!success) {
+      setIsTransmitting(false);
     }
+  }, [isPoweredOn, isInitialized, startRecording]);
 
-    try {
-      const arrayBuffer = await audioData.arrayBuffer();
+  const handlePTTRelease = useCallback(async () => {
+    if (!isTransmitting) return;
+    
+    setIsTransmitting(false);
+    const audioBlob = await stopRecording();
+    
+    if (audioBlob && isPoweredOn) {
+      const arrayBuffer = await audioBlob.arrayBuffer();
       const success = await unifiedMeshService.transmitVoice(arrayBuffer);
       
       if (success) {
@@ -154,25 +188,36 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
         
         setMessages(prev => [...prev, voiceMessage].slice(-50));
       }
-    } catch (error) {
-      console.error('Error transmitting audio:', error);
     }
-  }, [isPoweredOn, deviceStatus.signalQuality, channel]);
+  }, [isTransmitting, stopRecording, isPoweredOn, channel]);
 
   return {
-    isConnected: deviceStatus.signalQuality !== 'none' && audioInitialized,
+    // Connection status
+    isConnected: deviceStatus.signalQuality !== 'none' && isInitialized,
     peerCount: unifiedMeshService.getPeersOnCurrentChannel(),
+    
+    // Audio status
     isTransmitting,
     isReceiving,
+    isRecording,
+    audioError,
+    audioMetrics,
+    
+    // Device status
     connectionQuality: deviceStatus.signalQuality,
     batteryLevel: deviceStatus.batteryLevel,
     volume: deviceStatus.volume,
     isOnline: deviceStatus.isOnline,
     isWifiConnected: deviceStatus.isWifiConnected,
     isBluetoothEnabled: deviceStatus.isBluetoothEnabled,
+    
+    // Messages
     messages,
-    audioMetrics,
+    
+    // Actions
     sendMessage,
-    handleAudioData
+    handlePTTPress,
+    handlePTTRelease,
+    clearAudioError: clearError
   };
 };

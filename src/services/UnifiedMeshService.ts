@@ -1,5 +1,6 @@
 
 import { meshNetworkCore, type MeshNode, type MeshPacket } from './MeshNetworkCore';
+import { createEncryptionService, type EncryptionService } from './EncryptionService';
 
 export interface ChannelTransmission {
   id: string;
@@ -27,10 +28,20 @@ export interface DeviceStatus {
   };
 }
 
+export interface PairedDevice {
+  deviceId: string;
+  name: string;
+  verified: boolean;
+  timestamp: number;
+  publicKey: ArrayBuffer;
+}
+
 class UnifiedMeshService {
   private activeChannel: number = 1;
   private channelListeners: Map<number, Set<(transmission: ChannelTransmission) => void>> = new Map();
   private statusListeners: Set<(status: DeviceStatus) => void> = new Set();
+  private encryptionService: EncryptionService;
+  private deviceId: string;
   private deviceStatus: DeviceStatus = {
     batteryLevel: 100,
     isOnline: navigator.onLine,
@@ -48,10 +59,14 @@ class UnifiedMeshService {
   };
 
   constructor() {
+    this.deviceId = `DEVICE-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    this.encryptionService = createEncryptionService(this.deviceId);
     this.initializeService();
   }
 
-  private initializeService() {
+  private async initializeService() {
+    await this.encryptionService.initialize();
+    
     // Set up mesh network listeners
     meshNetworkCore.on('messageReceived', (packet: MeshPacket) => {
       this.handleIncomingMessage(packet);
@@ -80,10 +95,9 @@ class UnifiedMeshService {
         content: packet.payload?.content || packet.payload,
         type: packet.type,
         timestamp: packet.timestamp,
-        signalStrength: Math.random() * 100 // Simulated
+        signalStrength: Math.random() * 100
       };
 
-      // Notify channel listeners
       const listeners = this.channelListeners.get(transmission.channel);
       if (listeners) {
         listeners.forEach(listener => listener(transmission));
@@ -108,10 +122,45 @@ class UnifiedMeshService {
       }
     };
 
-    // Notify status listeners
     this.statusListeners.forEach(listener => listener(this.deviceStatus));
   }
 
+  // Pairing Methods
+  public async generatePairingCode(): Promise<string> {
+    return await this.encryptionService.generatePairingCode();
+  }
+
+  public async processPairingCode(code: string): Promise<{ deviceId: string; name: string }> {
+    const pairing = await this.encryptionService.processPairingCode(code);
+    return {
+      deviceId: pairing.deviceId,
+      name: `Device-${pairing.deviceId.slice(-6)}`
+    };
+  }
+
+  public async verifyPairing(deviceId: string, verificationCode: string): Promise<boolean> {
+    return await this.encryptionService.verifyPairing(deviceId, verificationCode);
+  }
+
+  public getPairedDevices(): PairedDevice[] {
+    return this.encryptionService.getPairedDevices().map(device => ({
+      deviceId: device.deviceId,
+      name: `Device-${device.deviceId.slice(-6)}`,
+      verified: device.verified,
+      timestamp: device.timestamp,
+      publicKey: device.publicKey
+    }));
+  }
+
+  public removePairing(deviceId: string): void {
+    this.encryptionService.removePairing(deviceId);
+  }
+
+  public async rotateKeys(): Promise<void> {
+    await this.encryptionService.rotateKeys();
+  }
+
+  // Core Methods
   public setChannel(channel: number) {
     if (channel >= 1 && channel <= 99) {
       this.activeChannel = channel;
@@ -152,7 +201,6 @@ class UnifiedMeshService {
     }
     this.channelListeners.get(channel)!.add(listener);
 
-    // Return unsubscribe function
     return () => {
       const listeners = this.channelListeners.get(channel);
       if (listeners) {
@@ -166,10 +214,8 @@ class UnifiedMeshService {
 
   public onDeviceStatusChange(listener: (status: DeviceStatus) => void) {
     this.statusListeners.add(listener);
-    // Immediately call with current status
     listener(this.deviceStatus);
 
-    // Return unsubscribe function
     return () => {
       this.statusListeners.delete(listener);
     };
@@ -191,5 +237,4 @@ class UnifiedMeshService {
   }
 }
 
-// Export singleton instance
 export const unifiedMeshService = new UnifiedMeshService();

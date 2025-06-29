@@ -1,6 +1,7 @@
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Activity, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { X, Radio, Wifi, Users, Signal, Battery, Zap } from 'lucide-react';
 import { meshNetworkCore, type MeshNode } from '../../services/MeshNetworkCore';
 
 interface NetworkTopologyVisualizationProps {
@@ -12,232 +13,265 @@ export const NetworkTopologyVisualization: React.FC<NetworkTopologyVisualization
   isVisible,
   onClose
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [nodes, setNodes] = useState<MeshNode[]>([]);
-  const [selectedNode, setSelectedNode] = useState<MeshNode | null>(null);
   const [networkStats, setNetworkStats] = useState<any>({});
+  const [selectedNode, setSelectedNode] = useState<MeshNode | null>(null);
 
   useEffect(() => {
-    if (isVisible) {
-      // Get current network state
-      const currentNodes = meshNetworkCore.getDiscoveredNodes();
+    if (!isVisible) return;
+
+    const updateNetworkData = () => {
+      const discoveredNodes = meshNetworkCore.getDiscoveredNodes();
       const stats = meshNetworkCore.getNetworkStats();
       
-      setNodes(currentNodes);
+      setNodes(discoveredNodes);
       setNetworkStats(stats);
-
-      // Set up listeners for real-time updates
-      const handleNodeDiscovered = (node: MeshNode) => {
-        setNodes(meshNetworkCore.getDiscoveredNodes());
-      };
-
-      const handleNodeLost = () => {
-        setNodes(meshNetworkCore.getDiscoveredNodes());
-      };
-
-      meshNetworkCore.on('nodeDiscovered', handleNodeDiscovered);
-      meshNetworkCore.on('nodeLost', handleNodeLost);
-
-      // Update stats periodically
-      const statsInterval = setInterval(() => {
-        setNetworkStats(meshNetworkCore.getNetworkStats());
-      }, 2000);
-
-      return () => {
-        clearInterval(statsInterval);
-      };
-    }
-  }, [isVisible]);
-
-  useEffect(() => {
-    if (!isVisible || !canvasRef.current || nodes.length === 0) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Position nodes in a circle
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      const radius = Math.min(canvas.width, canvas.height) / 3;
-
-      const nodePositions = nodes.map((node, index) => {
-        const angle = (index / nodes.length) * 2 * Math.PI;
-        return {
-          node,
-          x: centerX + Math.cos(angle) * radius,
-          y: centerY + Math.sin(angle) * radius
-        };
-      });
-
-      // Draw connections
-      nodePositions.forEach(({ node: sourceNode, x: sourceX, y: sourceY }) => {
-        nodePositions.forEach(({ node: targetNode, x: targetX, y: targetY }) => {
-          if (sourceNode.id !== targetNode.id) {
-            ctx.beginPath();
-            ctx.moveTo(sourceX, sourceY);
-            ctx.lineTo(targetX, targetY);
-            ctx.strokeStyle = `rgba(34, 197, 94, ${Math.min(sourceNode.signalStrength, targetNode.signalStrength) / 100 * 0.5})`;
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-        });
-      });
-
-      // Draw nodes
-      nodePositions.forEach(({ node, x, y }) => {
-        const radius = node.id === networkStats.nodeId ? 20 : 15;
-        
-        // Node circle
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, 2 * Math.PI);
-        ctx.fillStyle = node.id === networkStats.nodeId ? '#22c55e' : getNodeColor(node);
-        ctx.fill();
-        
-        // Signal strength ring
-        ctx.beginPath();
-        ctx.arc(x, y, radius + 3, 0, 2 * Math.PI * (node.signalStrength / 100));
-        ctx.strokeStyle = '#facc15';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Node label
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(node.name || node.id.slice(-4), x, y + radius + 15);
-      });
-
-      requestAnimationFrame(animate);
     };
 
-    animate();
-  }, [nodes, isVisible, networkStats]);
+    // Initial load
+    updateNetworkData();
 
-  const getNodeColor = (node: MeshNode): string => {
-    if (node.batteryLevel < 20) return '#ef4444';
-    if (node.batteryLevel < 50) return '#f59e0b';
-    return '#3b82f6';
+    // Update every 2 seconds
+    const interval = setInterval(updateNetworkData, 2000);
+
+    return () => clearInterval(interval);
+  }, [isVisible]);
+
+  const getSignalStrengthColor = (strength: number) => {
+    if (strength > 70) return 'text-green-400';
+    if (strength > 40) return 'text-yellow-400';
+    return 'text-red-400';
   };
 
-  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const getBatteryColor = (level: number) => {
+    if (level > 50) return 'text-green-400';
+    if (level > 20) return 'text-yellow-400';
+    return 'text-red-400';
+  };
 
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-
-    // Simple click detection - in a real implementation you'd check actual positions
-    const clickedNode = nodes[0]; // Simplified
-    setSelectedNode(clickedNode || null);
+  const formatLastSeen = (timestamp: number) => {
+    const diff = Date.now() - timestamp;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    
+    if (minutes > 0) return `${minutes}m ago`;
+    return `${seconds}s ago`;
   };
 
   if (!isVisible) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
-      <div className="bg-gray-900 rounded-2xl border-2 border-blue-400 p-6 w-full max-w-4xl max-h-[80vh] overflow-hidden">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <Activity className="w-6 h-6 text-blue-400" />
-            <h2 className="text-xl font-bold text-white">Network Topology</h2>
+    <div className="fixed inset-0 bg-black/90 z-[120] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-gray-900 rounded-2xl border-2 border-green-400 w-full max-w-4xl max-h-[90vh] overflow-hidden"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-700">
+          <div className="flex items-center gap-3">
+            <Wifi className="w-6 h-6 text-green-400" />
+            <div>
+              <h2 className="text-xl font-bold text-white">Network Topology</h2>
+              <p className="text-sm text-gray-400">
+                {nodes.length} nodes • {networkStats.queuedMessages || 0} queued messages
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
+            className="w-10 h-10 bg-gray-700 hover:bg-gray-600 rounded-full flex items-center justify-center transition-colors"
           >
-            <X className="w-4 h-4 text-white" />
+            <X className="w-5 h-5 text-white" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Canvas */}
-          <div className="lg:col-span-2">
-            <canvas
-              ref={canvasRef}
-              width={400}
-              height={300}
-              className="bg-gray-800 rounded-lg border border-gray-600 cursor-pointer w-full"
-              onClick={handleCanvasClick}
-            />
-          </div>
-
-          {/* Network Stats */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-blue-400">Network Stats</h3>
-            <div className="bg-gray-800 rounded-lg p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-300">Total Nodes:</span>
-                <span className="text-white font-mono">{nodes.length}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-300">Active Routes:</span>
-                <span className="text-white font-mono">{networkStats.activeRoutes || 0}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-300">Queue Depth:</span>
-                <span className="text-white font-mono">{networkStats.queuedMessages || 0}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-300">Battery:</span>
-                <span className="text-white font-mono">{Math.round(networkStats.batteryLevel || 0)}%</span>
-              </div>
-            </div>
-
-            {selectedNode && (
-              <div className="bg-gray-800 rounded-lg p-4">
-                <h4 className="text-blue-400 font-semibold mb-3">Node Details</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Name:</span>
-                    <span className="text-white font-mono">{selectedNode.name}</span>
+        <div className="flex h-[calc(90vh-120px)]">
+          {/* Network Visualization */}
+          <div className="flex-1 p-6 overflow-y-auto">
+            <div className="space-y-4">
+              {/* Network Stats */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Users className="w-4 h-4 text-blue-400" />
+                    <span className="text-sm text-gray-300">Active Nodes</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Signal:</span>
-                    <span className="text-white font-mono">{Math.round(selectedNode.signalStrength)}%</span>
+                  <div className="text-2xl font-bold text-white">{nodes.length}</div>
+                </div>
+                
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Signal className="w-4 h-4 text-green-400" />
+                    <span className="text-sm text-gray-300">Avg Signal</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Battery:</span>
-                    <span className="text-white font-mono">{Math.round(selectedNode.batteryLevel)}%</span>
+                  <div className="text-2xl font-bold text-white">
+                    {nodes.length > 0 ? Math.round(nodes.reduce((sum, node) => sum + node.signalStrength, 0) / nodes.length) : 0}%
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Relay:</span>
-                    <span className="text-white font-mono">{selectedNode.isRelay ? 'Yes' : 'No'}</span>
+                </div>
+                
+                <div className="bg-gray-800 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Battery className="w-4 h-4 text-yellow-400" />
+                    <span className="text-sm text-gray-300">Avg Battery</span>
+                  </div>
+                  <div className="text-2xl font-bold text-white">
+                    {nodes.length > 0 ? Math.round(nodes.reduce((sum, node) => sum + node.batteryLevel, 0) / nodes.length) : 0}%
                   </div>
                 </div>
               </div>
-            )}
 
-            {/* Node List */}
-            <div className="bg-gray-800 rounded-lg p-4 max-h-40 overflow-y-auto">
-              <h4 className="text-blue-400 font-semibold mb-3">Connected Nodes</h4>
-              <div className="space-y-1 text-xs">
+              {/* Node Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {nodes.map((node) => (
-                  <div
+                  <motion.div
                     key={node.id}
-                    className={`flex items-center gap-2 p-1 rounded ${
-                      node.id === networkStats.nodeId ? 'bg-green-900/30' : ''
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`bg-gray-800 rounded-lg p-4 cursor-pointer transition-all hover:bg-gray-700 ${
+                      selectedNode?.id === node.id ? 'ring-2 ring-green-400' : ''
                     }`}
+                    onClick={() => setSelectedNode(node)}
                   >
-                    <div 
-                      className={`w-2 h-2 rounded-full ${
-                        node.signalStrength > 75 ? 'bg-green-400' :
-                        node.signalStrength > 50 ? 'bg-yellow-400' : 'bg-red-400'
-                      }`} 
-                    />
-                    <span className="text-gray-300 flex-1">{node.name}</span>
-                    <span className="text-gray-400">{Math.round(node.signalStrength)}%</span>
-                  </div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Radio className="w-5 h-5 text-green-400" />
+                        <span className="font-mono text-white font-semibold">{node.name}</span>
+                      </div>
+                      {node.isRelay && (
+                        <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">
+                          RELAY
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-400">Signal:</span>
+                        <span className={`text-sm font-semibold ${getSignalStrengthColor(node.signalStrength)}`}>
+                          {Math.round(node.signalStrength)}%
+                        </span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-400">Battery:</span>
+                        <span className={`text-sm font-semibold ${getBatteryColor(node.batteryLevel)}`}>
+                          {Math.round(node.batteryLevel)}%
+                        </span>
+                      </div>
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-400">Last Seen:</span>
+                        <span className="text-sm text-gray-300">
+                          {formatLastSeen(node.lastSeen)}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {/* Capabilities */}
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {node.capabilities.map((capability) => (
+                        <span
+                          key={capability}
+                          className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded"
+                        >
+                          {capability.toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </motion.div>
                 ))}
               </div>
+
+              {nodes.length === 0 && (
+                <div className="text-center py-12">
+                  <Wifi className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-400 mb-2">No Nodes Discovered</h3>
+                  <p className="text-gray-500">
+                    Turn on your radio and wait for other nodes to appear in the network.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Node Details Panel */}
+          {selectedNode && (
+            <div className="w-80 border-l border-gray-700 bg-gray-800 p-6 overflow-y-auto">
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-white mb-2">Node Details</h3>
+                <div className="text-sm text-gray-400 font-mono">{selectedNode.id}</div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-300 mb-2">Status</h4>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Name:</span>
+                      <span className="text-sm text-white">{selectedNode.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Signal Strength:</span>
+                      <span className={`text-sm font-semibold ${getSignalStrengthColor(selectedNode.signalStrength)}`}>
+                        {Math.round(selectedNode.signalStrength)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Battery Level:</span>
+                      <span className={`text-sm font-semibold ${getBatteryColor(selectedNode.batteryLevel)}`}>
+                        {Math.round(selectedNode.batteryLevel)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-400">Is Relay:</span>
+                      <span className="text-sm text-white">
+                        {selectedNode.isRelay ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-300 mb-2">Capabilities</h4>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedNode.capabilities.map((capability) => (
+                      <span
+                        key={capability}
+                        className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded"
+                      >
+                        {capability.toUpperCase()}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {selectedNode.location && (
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-300 mb-2">Location</h4>
+                    <div className="text-sm text-gray-400 font-mono">
+                      {selectedNode.location.lat.toFixed(6)}, {selectedNode.location.lng.toFixed(6)}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-300 mb-2">Network Info</h4>
+                  <div className="space-y-1 text-sm">
+                    <div className="text-gray-400">
+                      Last seen: {formatLastSeen(selectedNode.lastSeen)}
+                    </div>
+                    <div className="text-gray-400">
+                      Node ID: {selectedNode.id.slice(-8)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };
