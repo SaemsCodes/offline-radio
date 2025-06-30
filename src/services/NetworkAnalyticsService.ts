@@ -1,4 +1,3 @@
-
 export interface NetworkEvent {
   id: string;
   timestamp: number;
@@ -42,6 +41,9 @@ export class NetworkAnalyticsService {
   private maxEvents = 10000;
   private analyticsInterval: number | null = null;
   private realTimeListeners: Set<(analytics: NetworkAnalytics) => void> = new Set();
+  private cachedNetworkHealth: 'excellent' | 'good' | 'fair' | 'poor' = 'poor';
+  private lastHealthCalculation = 0;
+  private healthCalculationCooldown = 5000; // 5 seconds
 
   constructor() {
     this.startAnalyticsCollection();
@@ -74,7 +76,7 @@ export class NetworkAnalyticsService {
     
     // Maintain event history limit
     if (this.events.length > this.maxEvents) {
-      this.events = this.events.slice(-this.maxEvents * 0.8); // Keep 80% of max
+      this.events = this.events.slice(-this.maxEvents * 0.8);
     }
 
     // Update peer statistics
@@ -82,8 +84,45 @@ export class NetworkAnalyticsService {
       this.updatePeerStats(peerId, event);
     }
 
+    // Schedule health recalculation with cooldown
+    this.scheduleHealthCalculation();
+
     // Trigger real-time updates
     this.notifyRealTimeListeners();
+  }
+
+  private scheduleHealthCalculation() {
+    const now = Date.now();
+    if (now - this.lastHealthCalculation > this.healthCalculationCooldown) {
+      this.lastHealthCalculation = now;
+      setTimeout(() => {
+        this.cachedNetworkHealth = this.calculateNetworkHealthDirect();
+      }, 100);
+    }
+  }
+
+  private calculateNetworkHealthDirect(): 'excellent' | 'good' | 'fair' | 'poor' {
+    const totalEvents = this.events.length;
+    if (totalEvents === 0) return 'poor';
+
+    const successfulEvents = this.events.filter(e => e.success).length;
+    const successRate = (successfulEvents / totalEvents) * 100;
+
+    const latencies = this.events.filter(e => e.latency !== undefined).map(e => e.latency!);
+    const averageLatency = latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : 0;
+
+    const errorEvents = this.events.filter(e => !e.success).length;
+    const errorRate = (errorEvents / totalEvents) * 100;
+    
+    if (successRate >= 95 && averageLatency < 100 && errorRate < 2) {
+      return 'excellent';
+    } else if (successRate >= 85 && averageLatency < 200 && errorRate < 5) {
+      return 'good';
+    } else if (successRate >= 70 && averageLatency < 500 && errorRate < 10) {
+      return 'fair';
+    } else {
+      return 'poor';
+    }
   }
 
   private updatePeerStats(peerId: string, event: NetworkEvent) {
@@ -142,23 +181,9 @@ export class NetworkAnalyticsService {
 
   private startAnalyticsCollection() {
     this.analyticsInterval = window.setInterval(() => {
-      this.calculateNetworkHealth();
+      this.scheduleHealthCalculation();
       this.notifyRealTimeListeners();
-    }, 10000); // Update every 10 seconds
-  }
-
-  private calculateNetworkHealth(): 'excellent' | 'good' | 'fair' | 'poor' {
-    const analytics = this.getAnalytics();
-    
-    if (analytics.successRate >= 95 && analytics.averageLatency < 100 && analytics.errorRate < 2) {
-      return 'excellent';
-    } else if (analytics.successRate >= 85 && analytics.averageLatency < 200 && analytics.errorRate < 5) {
-      return 'good';
-    } else if (analytics.successRate >= 70 && analytics.averageLatency < 500 && analytics.errorRate < 10) {
-      return 'fair';
-    } else {
-      return 'poor';
-    }
+    }, 10000);
   }
 
   getAnalytics(timeRange?: { start: number; end: number }): NetworkAnalytics {
@@ -200,7 +225,7 @@ export class NetworkAnalyticsService {
       activeConnections,
       transportDistribution,
       errorRate,
-      networkHealth: this.calculateNetworkHealth()
+      networkHealth: this.cachedNetworkHealth
     };
   }
 
