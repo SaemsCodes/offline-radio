@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
@@ -28,7 +27,7 @@ interface SettingsProps {
   onClose: () => void;
 }
 
-export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
+const Settings: React.FC<SettingsProps> = ({ onClose }) => {
   const [deviceStatus, setDeviceStatus] = useState<DeviceStatus>({
     batteryLevel: 100,
     isOnline: false,
@@ -398,3 +397,5 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     </motion.div>
   );
 };
+
+export default Settings;

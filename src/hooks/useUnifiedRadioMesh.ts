@@ -37,7 +37,7 @@ export const useUnifiedRadioMesh = (isPoweredOn: boolean, channel: number) => {
     isInitialized,
     isRecording,
     error: audioError,
-    metrics: audioMetrics,
+    audioMetrics,
     initialize,
     startRecording,
     stopRecording,

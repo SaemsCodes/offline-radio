@@ -78,7 +78,9 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
   // Subscribe to enhanced device status
   useEffect(() => {
     const unsubscribe = enhancedUnifiedMeshService.onStatusChange(setDeviceStatus);
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Subscribe to transmissions
@@ -94,7 +96,9 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
       
       setTimeout(() => setIsReceiving(false), 1000);
     });
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+    };
   }, [playAudio]);
 
   // Update channel in enhanced service

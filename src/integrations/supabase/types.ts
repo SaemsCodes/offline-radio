@@ -9,7 +9,114 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      device_registrations: {
+        Row: {
+          battery_level: number
+          capabilities: string[]
+          device_name: string
+          device_type: string
+          encryption_public_key: string | null
+          id: string
+          last_seen: string
+          user_id: string
+        }
+        Insert: {
+          battery_level?: number
+          capabilities?: string[]
+          device_name: string
+          device_type: string
+          encryption_public_key?: string | null
+          id: string
+          last_seen?: string
+          user_id: string
+        }
+        Update: {
+          battery_level?: number
+          capabilities?: string[]
+          device_name?: string
+          device_type?: string
+          encryption_public_key?: string | null
+          id?: string
+          last_seen?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      emergency_beacons: {
+        Row: {
+          acknowledged: boolean
+          device_id: string
+          id: string
+          location: Json
+          message: string
+          signal_strength: number
+          timestamp: string
+          user_id: string
+        }
+        Insert: {
+          acknowledged?: boolean
+          device_id: string
+          id: string
+          location: Json
+          message: string
+          signal_strength?: number
+          timestamp?: string
+          user_id: string
+        }
+        Update: {
+          acknowledged?: boolean
+          device_id?: string
+          id?: string
+          location?: Json
+          message?: string
+          signal_strength?: number
+          timestamp?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      radio_messages: {
+        Row: {
+          audio_data: string | null
+          channel: number
+          content: string
+          device_id: string
+          emergency_location: Json | null
+          id: string
+          is_encrypted: boolean
+          message_type: string
+          signal_strength: number
+          timestamp: string
+          user_id: string
+        }
+        Insert: {
+          audio_data?: string | null
+          channel: number
+          content: string
+          device_id: string
+          emergency_location?: Json | null
+          id?: string
+          is_encrypted?: boolean
+          message_type: string
+          signal_strength?: number
+          timestamp?: string
+          user_id: string
+        }
+        Update: {
+          audio_data?: string | null
+          channel?: number
+          content?: string
+          device_id?: string
+          emergency_location?: Json | null
+          id?: string
+          is_encrypted?: boolean
+          message_type?: string
+          signal_strength?: number
+          timestamp?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
