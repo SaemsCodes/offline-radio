@@ -1,52 +1,71 @@
 
 import React from 'react';
-import { Battery, Wifi, WifiOff, Users } from 'lucide-react';
 
 interface StatusDisplayProps {
   isPoweredOn: boolean;
-  isConnected: boolean;
-  peerCount: number;
-  batteryLevel: number;
+  audioMetrics?: {
+    quality: string;
+  };
+  messages: any[];
+  audioError?: string | null;
+  onClearAudioError?: () => void;
 }
 
 export const StatusDisplay: React.FC<StatusDisplayProps> = ({
   isPoweredOn,
-  isConnected,
-  peerCount,
-  batteryLevel
+  audioMetrics,
+  messages,
+  audioError,
+  onClearAudioError
 }) => {
-  const getBatteryColor = () => {
-    if (batteryLevel > 50) return 'text-green-400';
-    if (batteryLevel > 20) return 'text-yellow-400';
-    return 'text-red-400';
-  };
+  if (!isPoweredOn && !audioError) return null;
 
   return (
-    <div className="flex items-center space-x-3">
-      {/* Connection Status */}
-      <div className="flex items-center space-x-1">
-        {isPoweredOn && isConnected ? (
-          <Wifi className="w-4 h-4 text-green-400" />
-        ) : isPoweredOn ? (
-          <WifiOff className="w-4 h-4 text-red-400" />
-        ) : (
-          <WifiOff className="w-4 h-4 text-gray-500" />
-        )}
-        <div className="flex items-center space-x-1">
-          <Users className={`w-3 h-3 ${isPoweredOn ? 'text-blue-400' : 'text-gray-500'}`} />
-          <span className={`text-xs font-mono ${isPoweredOn ? 'text-white' : 'text-gray-500'}`}>
-            {peerCount}
-          </span>
+    <div className="space-y-2">
+      {/* Audio Error Display */}
+      {audioError && (
+        <div className="bg-red-900/50 border border-red-500 rounded-lg p-2">
+          <div className="flex items-center justify-between">
+            <span className="text-red-400 text-xs font-mono">{audioError}</span>
+            {onClearAudioError && (
+              <button
+                onClick={onClearAudioError}
+                className="text-red-400 hover:text-red-300 text-xs"
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Battery Level */}
-      <div className="flex items-center space-x-1">
-        <Battery className={`w-4 h-4 ${isPoweredOn ? getBatteryColor() : 'text-gray-500'}`} />
-        <span className={`text-xs font-mono ${isPoweredOn ? getBatteryColor() : 'text-gray-500'}`}>
-          {Math.round(batteryLevel)}%
-        </span>
-      </div>
+      {/* Status Information */}
+      {isPoweredOn && (
+        <div className="space-y-2">
+          {audioMetrics && (
+            <div className="bg-black/50 rounded-lg p-2 border border-gray-700">
+              <div className="flex justify-between items-center text-xs font-mono">
+                <span className="text-gray-400">AUDIO:</span>
+                <span className={`font-bold ${
+                  audioMetrics.quality === 'excellent' ? 'text-green-400' :
+                  audioMetrics.quality === 'good' ? 'text-yellow-400' :
+                  audioMetrics.quality === 'fair' ? 'text-orange-400' : 'text-red-400'
+                }`}>
+                  {audioMetrics.quality.toUpperCase()}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {messages.length > 0 && (
+            <div className="bg-black/50 rounded-lg p-2 border border-gray-700">
+              <div className="text-xs text-green-400 font-mono">
+                LAST RX: {messages[messages.length - 1]?.payload?.content || 'Signal received'}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
