@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Zap, Radio as RadioIcon, Wifi, WifiOff, Settings, Shield } from 'lucide-react';
@@ -62,12 +61,10 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
   };
 
   const handleFactoryReset = () => {
-    // Reset all radio state to defaults
     changeChannel(1);
     adjustVolume(5);
     adjustSquelch(3);
     setEncryptionEnabled(false);
-    // Clear any stored data
     localStorage.removeItem('orad-radio-settings');
     console.log('Factory reset completed');
   };
@@ -75,26 +72,26 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4">
-      <div className="relative w-full max-w-sm">
-        {/* Main Radio Body - Military Grade Styling */}
-        <div className="bg-gradient-to-b from-gray-900 via-gray-800 to-black rounded-2xl border-4 border-gray-600 shadow-2xl p-6 relative">
+    <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2">
+      <div className="relative w-full max-w-sm h-[75vh] overflow-y-auto">
+        {/* Main Radio Body - Compact Military Grade Styling */}
+        <div className="bg-gradient-to-b from-gray-900 via-gray-800 to-black rounded-xl border-2 border-gray-600 shadow-2xl p-4 relative">
           {/* Tactical Corner Details */}
-          <div className="absolute top-2 left-2 w-3 h-3 border-l-2 border-t-2 border-orange-500"></div>
-          <div className="absolute top-2 right-2 w-3 h-3 border-r-2 border-t-2 border-orange-500"></div>
-          <div className="absolute bottom-2 left-2 w-3 h-3 border-l-2 border-b-2 border-orange-500"></div>
-          <div className="absolute bottom-2 right-2 w-3 h-3 border-r-2 border-b-2 border-orange-500"></div>
+          <div className="absolute top-1 left-1 w-2 h-2 border-l border-t border-orange-500"></div>
+          <div className="absolute top-1 right-1 w-2 h-2 border-r border-t border-orange-500"></div>
+          <div className="absolute bottom-1 left-1 w-2 h-2 border-l border-b border-orange-500"></div>
+          <div className="absolute bottom-1 right-1 w-2 h-2 border-r border-b border-orange-500"></div>
 
           {/* Top Control Bar */}
-          <div className="flex items-center justify-between mb-4 bg-black/50 rounded-lg p-2 border border-gray-700">
+          <div className="flex items-center justify-between mb-3 bg-black/50 rounded-lg p-2 border border-gray-700">
             <div className="flex items-center gap-2">
-              <RadioIcon className={`w-5 h-5 ${radioState.isPoweredOn ? 'text-green-400' : 'text-gray-500'}`} />
-              <span className="text-orange-400 font-mono text-sm font-bold tracking-wider">ORAD-MK1</span>
+              <RadioIcon className={`w-4 h-4 ${radioState.isPoweredOn ? 'text-green-400' : 'text-gray-500'}`} />
+              <span className="text-orange-400 font-mono text-xs font-bold tracking-wider">ORAD-MK1</span>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setShowTopology(true)}
-                className="w-7 h-7 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
+                className="w-6 h-6 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
                 disabled={!radioState.isPoweredOn}
               >
                 {isConnected ? (
@@ -105,20 +102,20 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
               </button>
               <button
                 onClick={() => setShowPairing(true)}
-                className="w-7 h-7 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
+                className="w-6 h-6 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
                 disabled={!radioState.isPoweredOn}
               >
                 <Shield className="w-3 h-3 text-blue-400" />
               </button>
               <button
                 onClick={() => setShowSettings(true)}
-                className="w-7 h-7 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
+                className="w-6 h-6 bg-gray-800 hover:bg-gray-700 rounded border border-gray-600 flex items-center justify-center transition-colors"
               >
                 <Settings className="w-3 h-3 text-white" />
               </button>
               <button
                 onClick={onClose}
-                className="w-7 h-7 bg-red-700 hover:bg-red-600 rounded border border-red-500 flex items-center justify-center transition-colors"
+                className="w-6 h-6 bg-red-700 hover:bg-red-600 rounded border border-red-500 flex items-center justify-center transition-colors"
               >
                 <X className="w-3 h-3 text-white" />
               </button>
@@ -126,7 +123,7 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           </div>
 
           {/* Status Indicators */}
-          <div className="flex items-center justify-between mb-6 bg-black/70 rounded-lg p-3 border border-gray-700">
+          <div className="flex items-center justify-between mb-4 bg-black/70 rounded-lg p-2 border border-gray-700">
             <BatteryIndicator level={radioState.batteryLevel} isPoweredOn={radioState.isPoweredOn} />
             <SignalMeter strength={radioState.signalStrength} isPoweredOn={radioState.isPoweredOn} />
             <div className="flex flex-col items-center">
@@ -140,7 +137,7 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           </div>
 
           {/* Channel Display */}
-          <div className="mb-6">
+          <div className="mb-4">
             <ChannelDisplay 
               channel={radioState.channel}
               isPoweredOn={radioState.isPoweredOn}
@@ -150,7 +147,7 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           </div>
 
           {/* Channel Selector and Control Dials */}
-          <div className="grid grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-4 gap-2 mb-4">
             <ChannelSelector
               currentChannel={radioState.channel}
               onChannelChange={changeChannel}
@@ -188,17 +185,17 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           </div>
 
           {/* Power Button */}
-          <div className="flex justify-center mb-6">
+          <div className="flex justify-center mb-4">
             <motion.button
               onClick={powerToggle}
-              className={`w-20 h-20 rounded-full font-bold text-lg transition-all duration-300 shadow-lg border-4 ${
+              className={`w-16 h-16 rounded-full font-bold text-base transition-all duration-300 shadow-lg border-2 ${
                 radioState.isPoweredOn
                   ? 'bg-green-700 hover:bg-green-600 text-white border-green-500 shadow-green-600/50 ring-2 ring-green-400/30'
                   : 'bg-red-700 hover:bg-red-600 text-white border-red-500 shadow-red-600/50'
               }`}
               whileTap={{ scale: 0.95 }}
             >
-              <div className="font-mono font-bold">PWR</div>
+              <div className="font-mono font-bold text-sm">PWR</div>
               <div className="text-xs font-mono">
                 {radioState.isPoweredOn ? 'ON' : 'OFF'}
               </div>
@@ -206,7 +203,7 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           </div>
 
           {/* Enhanced PTT Button */}
-          <div className="mb-4">
+          <div className="mb-3">
             <EnhancedPTTButton
               onAudioData={handleAudioData}
               isEnabled={radioState.isPoweredOn && isConnected}
@@ -217,11 +214,11 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
           </div>
 
           {/* Emergency Button */}
-          <div className="flex justify-center mb-4">
+          <div className="flex justify-center mb-3">
             <motion.button
               onClick={toggleEmergencyMode}
               disabled={!radioState.isPoweredOn}
-              className={`px-8 py-3 rounded-lg font-bold text-sm transition-all border-2 font-mono ${
+              className={`px-6 py-2 rounded-lg font-bold text-xs transition-all border font-mono ${
                 radioState.emergencyMode
                   ? 'bg-red-700 text-white animate-pulse border-red-500'
                   : radioState.isPoweredOn
@@ -230,12 +227,12 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
               }`}
               whileTap={radioState.isPoweredOn ? { scale: 0.95 } : {}}
             >
-              <Zap className="w-4 h-4 inline mr-2" />
+              <Zap className="w-3 h-3 inline mr-1" />
               {radioState.emergencyMode ? 'EMERGENCY ACTIVE' : 'EMERGENCY'}
             </motion.button>
           </div>
 
-          {/* Audio Quality and Status Indicators */}
+          {/* Compact Status Display */}
           {radioState.isPoweredOn && (
             <div className="space-y-2">
               {audioMetrics && (
@@ -249,10 +246,6 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
                     }`}>
                       {audioMetrics.quality.toUpperCase()}
                     </span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs font-mono">
-                    <span className="text-gray-400">S/N:</span>
-                    <span className="text-gray-300">{audioMetrics.signalToNoise}dB</span>
                   </div>
                 </div>
               )}
@@ -269,7 +262,7 @@ export const AuthenticRadioUI: React.FC<AuthenticRadioUIProps> = ({ isOpen, onCl
 
           {/* Audio Error Display */}
           {audioError && (
-            <div className="bg-red-900/50 border border-red-500 rounded-lg p-2 mb-4">
+            <div className="bg-red-900/50 border border-red-500 rounded-lg p-2 mb-2">
               <div className="flex items-center justify-between">
                 <span className="text-red-400 text-xs font-mono">{audioError}</span>
                 <button

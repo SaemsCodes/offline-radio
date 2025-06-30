@@ -72,8 +72,8 @@
 /* Custom slider styling for military-grade appearance */
 .slider-thumb::-webkit-slider-thumb {
   appearance: none;
-  height: 20px;
-  width: 20px;
+  height: 18px;
+  width: 18px;
   border-radius: 50%;
   background: #10b981;
   border: 2px solid #065f46;
@@ -82,8 +82,8 @@
 }
 
 .slider-thumb::-moz-range-thumb {
-  height: 20px;
-  width: 20px;
+  height: 18px;
+  width: 18px;
   border-radius: 50%;
   background: #10b981;
   border: 2px solid #065f46;
@@ -97,4 +97,46 @@
     linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
   background-size: 10px 10px;
+}
+
+/* Smooth background transitions */
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.duration-2000 {
+  transition-duration: 2s;
+}
+
+/* Tactical radio styling */
+.radio-panel {
+  background: linear-gradient(135deg, 
+    rgba(17, 24, 39, 0.95) 0%, 
+    rgba(31, 41, 55, 0.95) 50%, 
+    rgba(0, 0, 0, 0.95) 100%);
+  backdrop-filter: blur(10px);
+  border: 2px solid rgba(75, 85, 99, 0.6);
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Compact scrollbar for radio interface */
+.radio-interface::-webkit-scrollbar {
+  width: 4px;
+}
+
+.radio-interface::-webkit-scrollbar-track {
+  background: rgba(31, 41, 55, 0.5);
+  border-radius: 2px;
+}
+
+.radio-interface::-webkit-scrollbar-thumb {
+  background: rgba(249, 115, 22, 0.6);
+  border-radius: 2px;
+}
+
+.radio-interface::-webkit-scrollbar-thumb:hover {
+  background: rgba(249, 115, 22, 0.8);
 }
