@@ -151,7 +151,13 @@ class MessagePersistenceService {
         .limit(limit);
 
       if (error) throw error;
-      return data || [];
+      
+      // Cast the data to ensure proper typing
+      return (data || []).map(msg => ({
+        ...msg,
+        message_type: msg.message_type as 'text' | 'voice' | 'emergency',
+        emergency_location: msg.emergency_location as { lat: number; lng: number } | undefined
+      }));
     } catch (error) {
       console.error('Error fetching messages:', error);
       return [];
